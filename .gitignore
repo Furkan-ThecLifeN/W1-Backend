@@ -1,0 +1,34 @@
+# Node modules
+/node_modules
+
+# serviceAccountKey
+serviceAccountKey.json
+
+
+# Environment variables dosyaları
+.env
+.env.local
+.env.development
+.env.production
+.env.staging
+.env.test
+
+# Firebase Admin SDK private key (Dosya adı varsa değiştir)
+/config/firebase-adminsdk.json
+
+# Log dosyaları
+*.log
+logs/
+
+# Build klasörleri
+/dist
+/build
+
+# IDE ve işletim sistemi dosyaları
+.DS_Store
+.vscode/
+
+# Npm/Yarn hata logları
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
