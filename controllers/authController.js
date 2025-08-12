@@ -7,7 +7,7 @@ const { OAuth2Client } = require('google-auth-library');
 
 require('dotenv').config();
 
-// Nodemailer Transporter ayarları
+// Nodemailer Transporter Ayarları
 let transporter = nodemailer.createTransport({
   service: 'gmail',
   auth: {
