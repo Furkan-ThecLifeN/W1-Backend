@@ -1,3 +1,5 @@
+// firebase.js dosyamızın içeriği
+
 const admin = require('firebase-admin');
 const path = require('path');
 

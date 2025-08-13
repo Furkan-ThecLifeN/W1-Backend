@@ -1,13 +1,13 @@
 // routes/authRoutes.js
+
 const express = require('express');
 const router = express.Router();
 const verifyToken = require('../middlewares/verifyToken');
-
 const {
-  registerUser,
-  resolveUserIdentifier,
-  getProfile,
-  googleSignIn
+    registerUser,
+    resolveUserIdentifier,
+    getProfile,
+    googleSignIn
 } = require('../controllers/authController');
 
 // Kullanıcı Kayıt
