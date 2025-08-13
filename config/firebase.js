@@ -1,5 +1,4 @@
 // firebase.js dosyamızın içeriği
-
 const admin = require('firebase-admin');
 const path = require('path');
 
@@ -16,3 +15,4 @@ const auth = admin.auth();
 const db = admin.firestore();
 
 module.exports = { auth, db };
+

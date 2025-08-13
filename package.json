@@ -4,6 +4,7 @@
   "description": "",
   "main": "app.js",
   "scripts": {
+    "prestart": "echo \"$FIREBASE_SERVICE_ACCOUNT\" > ./config/serviceAccountKey.json",
     "start": "node app.js",
     "build": "react-scripts build",
     "test": "echo \"Error: no test specified\" && exit 1",
