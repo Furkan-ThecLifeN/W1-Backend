@@ -1,4 +1,3 @@
-// config/firebase.js
 const admin = require('firebase-admin');
 const path = require('path');
 
@@ -7,12 +6,19 @@ const keyPath = process.env.NODE_ENV === 'production'
   : path.join(__dirname, 'serviceAccountKey.json'); 
 
 if (!admin.apps.length) {
-  admin.initializeApp({
-    credential: admin.credential.cert(require(keyPath))
-  });
+  try {
+    const serviceAccount = require(keyPath);
+    admin.initializeApp({
+      credential: admin.credential.cert(serviceAccount)
+    });
+  } catch (error) {
+    console.error("Firebase Admin SDK başlatılırken hata oluştu. Lütfen servis hesabı dosyasını kontrol edin.", error);
+    process.exit(1); 
+  }
 }
 
 const auth = admin.auth();
 const db = admin.firestore();
 
+// Not: Storage'ı devre dışı bıraktık
 module.exports = { auth, db };
