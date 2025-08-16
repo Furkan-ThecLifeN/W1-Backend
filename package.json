@@ -25,11 +25,14 @@
     "dotenv": "^17.2.1",
     "express": "^5.1.0",
     "express-rate-limit": "^8.0.1",
+    "express-useragent": "^1.0.15",
     "firebase-admin": "^13.4.0",
     "helmet": "^8.1.0",
     "nodemailer": "^7.0.5",
     "react-router-dom": "^7.8.0",
-    "react-scripts": "^5.0.1"
+    "react-scripts": "^5.0.1",
+    "request-ip": "^3.3.0",
+    "ua-parser-js": "^2.0.4"
   },
   "devDependencies": {
     "nodemon": "^3.1.10"

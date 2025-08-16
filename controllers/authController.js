@@ -4,8 +4,10 @@ const { auth, db } = require('../config/firebase');
 const { isValidEmail, isValidUsername, isValidPassword } = require('../utils/validators');
 const nodemailer = require('nodemailer');
 const { OAuth2Client } = require('google-auth-library');
-// Firestore ve Storage'ı direkt firebase-admin paketinden alıyoruz
-const { getDoc, serverTimestamp } = require('firebase-admin/firestore'); 
+const { serverTimestamp } = require('firebase-admin/firestore');
+const { getAuth } = require('firebase-admin/auth');
+const fetch = require('node-fetch');
+const userController = require('./userController'); // ✅ YENİ: Cihaz kaydı için userController'ı dahil ettik
 
 require('dotenv').config();
 
@@ -37,126 +39,157 @@ const sendWelcomeEmail = async (email, username) => {
 
     try {
         await transporter.sendMail(mailOptions);
-        console.log(`Hoş geldin e-postası ${email} adresine başarıyla gönderildi.`);
+        console.log('Hoş geldin e-postası gönderildi.');
     } catch (error) {
-        console.error(`Hoş geldin e-postası gönderilirken hata:`, error.message);
-        throw new Error(`E-posta gönderilemedi: ${error.message}`);
+        console.error('Hoş geldin e-postası gönderilirken hata:', error);
     }
 };
 
-// Kullanıcı kayıt
+// Kullanıcı Kaydı
 exports.registerUser = async (req, res) => {
-    const { email, username, displayName, password, confirmPassword } = req.body;
+    const { email, password, username, displayName } = req.body;
 
-    if (!isValidEmail(email)) return res.status(400).json({ error: 'Geçersiz email formatı.' });
-    if (!isValidUsername(username)) return res.status(400).json({ error: 'Geçersiz kullanıcı adı formatı.' });
-    if (!isValidPassword(password)) return res.status(400).json({ error: 'Şifre kriterleri sağlanmadı.' });
-    if (password !== confirmPassword) return res.status(400).json({ error: 'Şifreler eşleşmiyor.' });
+    if (!email || !password || !username) {
+        return res.status(400).json({ error: 'E-posta, şifre ve kullanıcı adı gerekli.' });
+    }
+
+    if (!isValidEmail(email)) {
+        return res.status(400).json({ error: 'Geçersiz e-posta formatı.' });
+    }
+
+    if (!isValidUsername(username)) {
+        return res.status(400).json({ error: 'Kullanıcı adı en az 3, en fazla 15 karakter olmalı ve sadece harf, rakam ve alt çizgi içerebilir.' });
+    }
+
+    if (!isValidPassword(password)) {
+        return res.status(400).json({ error: 'Şifre en az 8 karakter olmalı, en az bir büyük harf, bir küçük harf, bir rakam ve bir özel karakter içermelidir.' });
+    }
 
     try {
-        const usernameSnapshot = await db.collection('users').where('username', '==', username).get();
-        if (!usernameSnapshot.empty) return res.status(409).json({ error: 'Bu kullanıcı adı zaten alınmış.' });
-
-        try {
-            await auth.getUserByEmail(email);
-            return res.status(409).json({ error: 'Bu e-posta adresi zaten kullanılıyor.' });
-        } catch (firebaseErr) {
-            if (firebaseErr.code !== 'auth/user-not-found') throw firebaseErr;
+        const usernameExists = await db.collection('users').where('username', '==', username).get();
+        if (!usernameExists.empty) {
+            return res.status(409).json({ error: 'Bu kullanıcı adı zaten kullanılıyor.' });
         }
 
         const userRecord = await auth.createUser({
-            email,
-            password,
+            email: email,
+            password: password,
             displayName: displayName || username
         });
 
         const userProfile = {
             uid: userRecord.uid,
             email: userRecord.email,
-            username,
+            username: username,
             displayName: displayName || username,
-            createdAt: new Date(),
+            photoURL: 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png',
+            bio: '',
+            familySystem: null,
+            accountType: 'personal',
+            isFrozen: false,
+            createdAt: serverTimestamp(),
+            stats: {
+                posts: 0,
+                rta: 0,
+                followers: 0,
+                following: 0,
+            },
+            lastChangeDates: {
+                username: serverTimestamp(),
+                email: serverTimestamp(),
+                password: serverTimestamp(),
+            },
         };
-
         await db.collection('users').doc(userRecord.uid).set(userProfile);
-        await sendWelcomeEmail(userRecord.email, userProfile.displayName);
 
-        return res.status(201).json({ message: 'Kayıt başarılı! Şimdi giriş yapabilirsiniz.' });
+        await sendWelcomeEmail(email, username);
+
+        return res.status(201).json({
+            message: 'Kullanıcı başarıyla kaydedildi.',
+            user: { uid: userRecord.uid, email: userRecord.email }
+        });
 
     } catch (error) {
-        console.error('Kayıt sırasında hata:', error);
-        if (error.code === 'auth/email-already-in-use') return res.status(409).json({ error: 'Bu e-posta adresi zaten kullanılıyor.' });
+        console.error('Kayıt hatası:', error);
+        if (error.code === 'auth/email-already-in-use') {
+            return res.status(409).json({ error: 'Bu e-posta adresi zaten kullanılıyor.' });
+        }
         return res.status(500).json({ error: 'Kayıt sırasında bir hata oluştu.', details: error.message });
     }
 };
 
-// Google ile giriş
-exports.googleSignIn = async (req, res) => {
-    const { idToken } = req.body;
-    if (!idToken) return res.status(400).json({ error: 'Google ID Token gerekli.' });
+// Kullanıcı Girişi
+exports.login = async (req, res) => {
+    const { identifier, password } = req.body;
+
+    if (!identifier || !password) {
+        return res.status(400).json({ error: 'E-posta/Kullanıcı adı ve şifre gerekli.' });
+    }
+
+    let userEmail;
 
     try {
-        const ticket = await googleClient.verifyIdToken({
-            idToken: idToken,
-            audience: process.env.GOOGLE_CLIENT_ID,
-        });
-        const payload = ticket.getPayload();
-
-        const googleEmail = payload['email'];
-        const googleUid = payload['sub'];
-        const googleDisplayName = payload['name'];
-        const googlePhotoUrl = payload['picture'];
-
-        let firebaseUser;
-        try {
-            firebaseUser = await auth.getUserByEmail(googleEmail);
-        } catch (error) {
-            if (error.code === 'auth/user-not-found') {
-                firebaseUser = await auth.createUser({
-                    uid: googleUid,
-                    email: googleEmail,
-                    displayName: googleDisplayName,
-                    photoURL: googlePhotoUrl,
-                    emailVerified: true
-                });
-
-                await db.collection('users').doc(firebaseUser.uid).set({
-                    uid: firebaseUser.uid,
-                    email: firebaseUser.email,
-                    username: googleEmail.split('@')[0],
-                    displayName: firebaseUser.displayName,
-                    photoURL: googlePhotoUrl,
-                    createdAt: new Date(),
-                    isEmailVerified: true
-                });
-
-                await sendWelcomeEmail(googleEmail, googleDisplayName);
-            } else throw error;
+        const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
+        if (emailRegex.test(identifier)) {
+            userEmail = identifier;
+        } else {
+            const usernameSnapshot = await db.collection('users').where('username', '==', identifier).limit(1).get();
+            if (usernameSnapshot.empty) {
+                return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
+            }
+            userEmail = usernameSnapshot.docs[0].data().email;
         }
 
-        const firebaseToken = await auth.createCustomToken(firebaseUser.uid);
+        const userRecord = await getAuth().getUserByEmail(userEmail);
 
-        return res.status(200).json({
-            message: 'Google ile giriş başarılı.',
-            token: firebaseToken,
-            user: {
-                uid: firebaseUser.uid,
-                email: firebaseUser.email,
-                displayName: firebaseUser.displayName,
-                emailVerified: firebaseUser.emailVerified
-            }
+        // Firebase REST API ile şifre doğrulaması
+        const apiKey = process.env.FIREBASE_API_KEY;
+        const restApiUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
+        const restApiResponse = await fetch(restApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: userEmail, password, returnSecureToken: true }),
         });
 
+        const restApiData = await restApiResponse.json();
+
+        if (!restApiResponse.ok) {
+            if (restApiData.error && (restApiData.error.message === 'INVALID_PASSWORD' || restApiData.error.message === 'EMAIL_NOT_FOUND')) {
+                return res.status(403).json({ error: 'Geçersiz email veya şifre.' });
+            }
+            throw new Error(restApiData.error.message);
+        }
+
+        // Eğer kullanıcı dondurulmuşsa, aktif hale getir
+        if (userRecord.disabled) {
+            console.log(`Dondurulmuş hesap algılandı. Yeniden aktif ediliyor: ${userRecord.email}`);
+            await getAuth().updateUser(userRecord.uid, { disabled: false });
+            await db.collection('users').doc(userRecord.uid).update({ isFrozen: false });
+        }
+
+        // ✅ YENİ: Başarılı girişten sonra cihaz bilgilerini kaydet
+        const ipAddress = req.clientIp;
+        const userAgentString = req.useragent.source;
+        await userController.saveLoginDevice(userRecord.uid, ipAddress, userAgentString);
+
+        // Custom token oluşturma
+        const customToken = await getAuth().createCustomToken(userRecord.uid);
+        
+        return res.status(200).json({ token: customToken });
+
     } catch (error) {
-        console.error('Google giriş hatası:', error);
-        return res.status(500).json({ error: 'Google ile giriş sırasında bir hata oluştu.', details: error.message });
+        console.error('Giriş sırasında hata:', error);
+        if (error.code === 'auth/user-not-found') {
+            return res.status(403).json({ error: 'Geçersiz email veya şifre.' });
+        }
+        return res.status(500).json({ error: 'Giriş sırasında bir hata oluştu.', details: error.message });
     }
 };
 
-// Tanımlayıcı çözümleme
+// Tanımlayıcıyı (email/username) çözme
 exports.resolveUserIdentifier = async (req, res) => {
     const { identifier } = req.body;
-    if (!identifier) return res.status(400).json({ error: 'Tanımlayıcı boş bırakılamaz.' });
+    if (!identifier) return res.status(400).json({ error: 'Tanımlayıcı sağlanamadı.' });
 
     try {
         const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
@@ -187,7 +220,124 @@ exports.getProfile = async (req, res) => {
         const userDoc = await db.collection('users').doc(uid).get();
         if (!userDoc.exists) return res.status(404).json({ error: 'Kullanıcı profili bulunamadı.' });
         return res.status(200).json({ profile: userDoc.data() });
-    } catch (err) {
-        return res.status(500).json({ error: 'Profil alınırken hata oluştu.', details: err.message });
+    } catch (error) {
+        console.error('Profil getirme hatası:', error);
+        return res.status(500).json({ error: 'Profil alınırken bir hata oluştu.', details: error.message });
+    }
+};
+
+// Google ile Giriş
+exports.googleSignIn = async (req, res) => {
+    const { idToken } = req.body;
+
+    if (!idToken) {
+        return res.status(400).json({ error: "Google ID token'ı gerekli." });
+    }
+
+    try {
+        const ticket = await googleClient.verifyIdToken({
+            idToken: idToken,
+            audience: process.env.GOOGLE_CLIENT_ID,
+        });
+        const payload = ticket.getPayload();
+        const { sub: googleId, email, name: displayName, picture: photoURL } = payload;
+
+        let userRecord;
+        try {
+            userRecord = await auth.getUserByEmail(email);
+        } catch (error) {
+            if (error.code === 'auth/user-not-found') {
+                const username = email.split('@')[0] + Math.random().toString(36).substring(2, 5);
+                
+                const usernameExists = await db.collection('users').where('username', '==', username).get();
+                if (!usernameExists.empty) {
+                    username = email.split('@')[0] + Math.random().toString(36).substring(2, 8);
+                }
+
+                userRecord = await auth.createUser({
+                    email,
+                    displayName,
+                    photoURL,
+                    emailVerified: true
+                });
+
+                const userProfile = {
+                    uid: userRecord.uid,
+                    email: userRecord.email,
+                    username: username,
+                    displayName: displayName || username,
+                    photoURL: photoURL || 'https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png',
+                    bio: '',
+                    familySystem: null,
+                    accountType: 'personal',
+                    isFrozen: false,
+                    createdAt: serverTimestamp(),
+                    stats: {
+                        posts: 0,
+                        rta: 0,
+                        followers: 0,
+                        following: 0,
+                    },
+                    lastChangeDates: {
+                        username: serverTimestamp(),
+                        email: serverTimestamp(),
+                        password: serverTimestamp(),
+                    },
+                };
+                await db.collection('users').doc(userRecord.uid).set(userProfile);
+                await sendWelcomeEmail(email, displayName || username);
+
+            } else {
+                throw error;
+            }
+        }
+        
+        if (userRecord.disabled) {
+            console.log(`Google girişi ile dondurulmuş hesap algılandı. Yeniden aktif ediliyor: ${userRecord.email}`);
+            await getAuth().updateUser(userRecord.uid, { disabled: false });
+            await db.collection('users').doc(userRecord.uid).update({ isFrozen: false });
+        }
+
+        // ✅ YENİ: Başarılı girişten sonra cihaz bilgilerini kaydet
+        const ipAddress = req.clientIp;
+        const userAgentString = req.useragent.source;
+        await userController.saveLoginDevice(userRecord.uid, ipAddress, userAgentString);
+
+        const customToken = await auth.createCustomToken(userRecord.uid);
+        const userProfile = (await db.collection('users').doc(userRecord.uid).get()).data();
+
+        return res.status(200).json({
+            message: 'Google ile giriş başarılı.',
+            user: {
+                uid: userRecord.uid,
+                displayName: userRecord.displayName,
+                email: userRecord.email,
+                photoURL: userRecord.photoURL,
+            },
+            token: customToken
+        });
+
+    } catch (error) {
+        console.error('Google ile giriş hatası:', error);
+        return res.status(500).json({ error: 'Google ile giriş sırasında bir hata oluştu.', details: error.message });
+    }
+};
+
+// Şifre sıfırlama
+exports.forgotPassword = async (req, res) => {
+    const { email } = req.body;
+    if (!email) {
+        return res.status(400).json({ error: 'E-posta adresi gerekli.' });
+    }
+
+    try {
+        await auth.generatePasswordResetLink(email);
+        res.status(200).json({ message: 'Şifre sıfırlama e-postası başarıyla gönderildi.' });
+    } catch (error) {
+        if (error.code === 'auth/user-not-found') {
+            return res.status(404).json({ error: 'Bu e-posta adresine kayıtlı bir kullanıcı bulunamadı.' });
+        }
+        console.error('Şifre sıfırlama hatası:', error);
+        return res.status(500).json({ error: 'Şifre sıfırlama sırasında bir hata oluştu.' });
     }
 };

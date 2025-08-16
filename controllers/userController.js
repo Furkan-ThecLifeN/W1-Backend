@@ -23,8 +23,6 @@ exports.updateProfile = async (req, res) => {
         }
 
         const userData = userDoc.data();
-
-        // 15 günlük bekleme süresi kontrolü
         const now = new Date();
         const DURATION_LIMIT_DAYS = 15;
 
@@ -44,7 +42,6 @@ exports.updateProfile = async (req, res) => {
         const authUpdates = {};
         const lastChangeDatesUpdates = {};
 
-        // Kullanıcı adı
         if (updates.username && updates.username !== userData.username) {
             const cooldownError = checkCooldown('username');
             if (cooldownError) return res.status(403).json({ error: cooldownError });
@@ -55,32 +52,21 @@ exports.updateProfile = async (req, res) => {
             lastChangeDatesUpdates.username = FieldValue.serverTimestamp();
         }
 
-        // Profil fotoğrafı
         if (updates.photoURL && updates.photoURL.startsWith('data:')) {
             const cooldownError = checkCooldown('photoURL');
             if (cooldownError) return res.status(403).json({ error: cooldownError });
-            
             const bucket = getStorage().bucket();
             const filename = `profile_pictures/${uid}/${Date.now()}_profile.jpeg`;
             const file = bucket.file(filename);
-
             const base64Data = updates.photoURL.replace(/^data:image\/\w+;base64,/, '');
             const buffer = Buffer.from(base64Data, 'base64');
-            
-            await file.save(buffer, {
-                metadata: {
-                    contentType: 'image/jpeg'
-                },
-                public: true
-            });
-
+            await file.save(buffer, { metadata: { contentType: 'image/jpeg' }, public: true });
             const photoURL = `https://storage.googleapis.com/${bucket.name}/${filename}`;
             firestoreUpdates.photoURL = photoURL;
             authUpdates.photoURL = photoURL;
             lastChangeDatesUpdates.photoURL = FieldValue.serverTimestamp();
         }
 
-        // Display Name ve Bio
         if (updates.displayName !== undefined && updates.displayName !== userData.displayName) {
             firestoreUpdates.displayName = updates.displayName;
             authUpdates.displayName = updates.displayName;
@@ -91,7 +77,6 @@ exports.updateProfile = async (req, res) => {
             firestoreUpdates.bio = updates.bio;
         }
 
-        // Diğer alanlar
         if (updates.email !== undefined && updates.email !== userData.email) {
             const cooldownError = checkCooldown('email');
             if (cooldownError) return res.status(403).json({ error: cooldownError });
@@ -107,7 +92,6 @@ exports.updateProfile = async (req, res) => {
             lastChangeDatesUpdates.phone = FieldValue.serverTimestamp();
         }
 
-        // ✅ Hesap Tipi Güncelleme
         if (updates.accountType && updates.accountType !== userData.accountType) {
             if (updates.accountType === 'personal' || updates.accountType === 'business') {
                 firestoreUpdates.accountType = updates.accountType;
@@ -116,7 +100,6 @@ exports.updateProfile = async (req, res) => {
             }
         }
 
-        // Şifre güncelleme
         if (updates.password) {
             const cooldownError = checkCooldown('password');
             if (cooldownError) return res.status(403).json({ error: cooldownError });
@@ -124,12 +107,10 @@ exports.updateProfile = async (req, res) => {
             lastChangeDatesUpdates.password = FieldValue.serverTimestamp();
         }
 
-        // Firebase Auth'u güncelle
         if (Object.keys(authUpdates).length > 0) {
             await auth.updateUser(uid, authUpdates);
         }
 
-        // Firestore'u güncelle
         const finalFirestoreUpdates = { ...firestoreUpdates };
         if (Object.keys(lastChangeDatesUpdates).length > 0) {
             finalFirestoreUpdates.lastChangeDates = {
@@ -138,12 +119,10 @@ exports.updateProfile = async (req, res) => {
             };
         }
 
-        // Eğer güncelleme yapılacak bir alan varsa Firestore'u güncelle
         if (Object.keys(finalFirestoreUpdates).length > 0) {
             await userDocRef.update(finalFirestoreUpdates);
         }
 
-        // Güncellenmiş profili tekrar al
         const updatedUserDoc = await userDocRef.get();
         const updatedUser = updatedUserDoc.data();
 
@@ -152,5 +131,160 @@ exports.updateProfile = async (req, res) => {
     } catch (error) {
         console.error('Profil güncelleme hatası:', error);
         return res.status(500).json({ error: `Profil güncellenirken bir hata oluştu. Lütfen tekrar deneyin. Detay: ${error.message}` });
+    }
+};
+
+// ✅ GÜNCELLENDİ: Cihaz ve Konum Bilgilerini Kaydetme
+exports.saveLoginDevice = async (req, res) => {
+    try {
+        const { uid } = req.user;
+        const ip = req.clientIp || 'Bilinmiyor';
+        const userAgentInfo = req.useragent;
+        let location = 'Konum Bilinmiyor';
+
+        if (ip && ip !== 'Bilinmiyor') {
+            try {
+                const geoRes = await fetch(`http://ip-api.com/json/${ip}?fields=city,country,status`);
+                const geoData = await geoRes.json();
+                if (geoData.status === 'success') {
+                    location = `${geoData.city}, ${geoData.country}`;
+                }
+            } catch (geoError) {
+                console.error('Konum servisine erişirken hata:', geoError);
+            }
+        }
+
+        let deviceType = 'Bilinmeyen Cihaz';
+        if (userAgentInfo.isDesktop) {
+            deviceType = 'Bilgisayar';
+        } else if (userAgentInfo.isMobile) {
+            deviceType = 'Mobil';
+        } else if (userAgentInfo.isTablet) {
+            deviceType = 'Tablet';
+        }
+
+        const browserName = userAgentInfo.browser || 'Bilinmeyen Tarayıcı';
+        const osName = userAgentInfo.os || 'Bilinmeyen OS';
+        
+        if (!uid) {
+            return res.status(401).json({ error: 'Yetkisiz erişim.' });
+        }
+
+        const deviceData = {
+            ip,
+            device: deviceType,
+            browser: browserName,
+            os: osName,
+            location: location, 
+            loggedInAt: FieldValue.serverTimestamp()
+        };
+
+        const userDocRef = db.collection('users').doc(uid);
+        await userDocRef.collection('devices').add(deviceData);
+        
+        return res.status(200).json({ message: 'Cihaz bilgileri başarıyla kaydedildi.' });
+
+    } catch (error) {
+        console.error('Cihaz kaydetme hatası:', error);
+        return res.status(500).json({ error: 'Cihaz bilgileri kaydedilirken hata oluştu.', details: error.message });
+    }
+};
+
+// ✅ GÜNCELLENDİ: Cihazları çekme
+exports.getLoginDevices = async (req, res) => {
+    try {
+        const { uid } = req.user;
+        const devicesSnapshot = await db.collection('users').doc(uid).collection('devices').orderBy('loggedInAt', 'desc').get();
+
+        const devices = devicesSnapshot.docs.map(doc => {
+            const data = doc.data();
+            return {
+                ...data,
+                id: doc.id
+            };
+        });
+
+        return res.status(200).json({ devices });
+
+    } catch (error) {
+        console.error('Cihaz geçmişi alınırken hata:', error);
+        return res.status(500).json({ error: 'Cihaz geçmişi alınamadı.', details: error.message });
+    }
+};
+
+
+// Cihaz bilgilerini kaydetme
+exports.saveLoginDevice = async (req, res) => {
+    try {
+        const { uid } = req.user;
+        
+        // request-ip ve express-useragent'den gelen verileri kullan
+        const ip = req.clientIp || 'Bilinmiyor';
+        const userAgentInfo = req.useragent;
+
+        // Basitleştirilmiş cihaz ve tarayıcı bilgileri
+        let deviceType = 'Bilinmeyen Cihaz';
+        if (userAgentInfo.isDesktop) {
+            deviceType = 'Bilgisayar';
+        } else if (userAgentInfo.isMobile) {
+            deviceType = 'Mobil';
+        } else if (userAgentInfo.isTablet) {
+            deviceType = 'Tablet';
+        }
+
+        const browserName = userAgentInfo.browser || 'Bilinmeyen Tarayıcı';
+        const osName = userAgentInfo.os || 'Bilinmeyen OS';
+        
+        if (!uid) {
+            return res.status(401).json({ error: 'Yetkisiz erişim.' });
+        }
+
+        const deviceData = {
+            ip,
+            device: deviceType,
+            browser: browserName,
+            os: osName,
+            loggedInAt: FieldValue.serverTimestamp()
+        };
+
+        const userDocRef = db.collection('users').doc(uid);
+        await userDocRef.collection('devices').add(deviceData);
+        
+        return res.status(200).json({ message: 'Cihaz bilgileri başarıyla kaydedildi.' });
+
+    } catch (error) {
+        console.error('Cihaz kaydetme hatası:', error);
+        return res.status(500).json({ error: 'Cihaz bilgileri kaydedilirken hata oluştu.', details: error.message });
+    }
+};
+
+// Giriş yapılan cihazları getirme
+exports.getLoginDevices = async (req, res) => {
+    try {
+        const { uid } = req.user;
+
+        const devicesSnapshot = await db.collection('loginHistory')
+            .where('userId', '==', uid)
+            .orderBy('timestamp', 'desc')
+            .get();
+
+        const devices = devicesSnapshot.docs.map(doc => {
+            const data = doc.data();
+            const timestamp = data.timestamp && data.timestamp.toDate
+                ? data.timestamp.toDate()
+                : null;
+            
+            return {
+                ...data,
+                id: doc.id,
+                timestamp: timestamp
+            };
+        });
+
+        return res.status(200).json({ devices });
+
+    } catch (error) {
+        console.error('Cihaz geçmişi alınırken hata:', error);
+        return res.status(500).json({ error: `Cihaz geçmişi alınırken bir hata oluştu. Detay: ${error.message}` });
     }
 };
