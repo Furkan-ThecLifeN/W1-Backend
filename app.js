@@ -8,6 +8,7 @@ const useragent = require('express-useragent');
 
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
+const { startDeletionJob } = require('./cronJob'); // ✅ YENİ: Cron job import edildi
 
 const app = express();
 
@@ -44,4 +45,7 @@ app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes); // Rota ismi daha mantıklı hale getirildi
 
 const PORT = process.env.PORT || 3001;
-app.listen(PORT, () => console.log(`Server ${PORT} portunda çalışıyor`));
+app.listen(PORT, () => {
+  console.log(`Server ${PORT} portunda çalışıyor`);
+  startDeletionJob(); // ✅ YENİ: Sunucu başladığında cron job'u başlat
+});

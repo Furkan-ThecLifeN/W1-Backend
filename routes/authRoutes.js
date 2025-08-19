@@ -7,7 +7,8 @@ const {
     registerUser,
     resolveUserIdentifier,
     getProfile,
-    googleSignIn
+    googleSignIn,
+    requestAccountDeletion 
 } = require('../controllers/authController');
 const authController = require("../controllers/authController");
 
@@ -29,6 +30,10 @@ router.get('/profile', verifyToken, getProfile);
 
 // Şifre sıfırlama isteği
 router.post('/forgot-password', authController.forgotPassword);
+
+// ✅ YENİ: Hesabı kalıcı olarak silme isteği
+router.post('/delete-account', verifyToken, requestAccountDeletion);
+
 
 
 module.exports = router;

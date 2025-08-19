@@ -4,15 +4,15 @@ const { auth, db } = require('../config/firebase');
 const { isValidEmail, isValidUsername, isValidPassword } = require('../utils/validators');
 const nodemailer = require('nodemailer');
 const { OAuth2Client } = require('google-auth-library');
-const { serverTimestamp } = require('firebase-admin/firestore');
+const { serverTimestamp, FieldValue } = require('firebase-admin/firestore');
 const { getAuth } = require('firebase-admin/auth');
 const fetch = require('node-fetch');
-const userController = require('./userController'); // ✅ YENİ: Cihaz kaydı için userController'ı dahil ettik
+const userController = require('./userController');
 
 require('dotenv').config();
 
 // Nodemailer Transporter Ayarları
-let transporter = nodemailer.createTransport({
+const transporter = nodemailer.createTransport({
     service: 'gmail',
     auth: {
         user: process.env.EMAIL_USER,
@@ -25,7 +25,7 @@ const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
 // Hoş geldin e-postası
 const sendWelcomeEmail = async (email, username) => {
-    let mailOptions = {
+    const mailOptions = {
         from: process.env.EMAIL_USER,
         to: email,
         subject: 'W1\'e Hoş Geldiniz!',
@@ -42,6 +42,66 @@ const sendWelcomeEmail = async (email, username) => {
         console.log('Hoş geldin e-postası gönderildi.');
     } catch (error) {
         console.error('Hoş geldin e-postası gönderilirken hata:', error);
+    }
+};
+
+// Silme Talebi E-postası
+const sendDeletionEmail = async (email) => {
+    const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: 'W1 Hesap Silme Talebi Onayı',
+        html: `
+            <p>Merhaba,</p>
+            <p>W1 hesabınız için kalıcı silme talebiniz alınmıştır. Hesabınız 15 gün içinde kalıcı olarak silinecektir.</p>
+            <p>Bu işlemi iptal etmek için, 15 gün içinde hesabınıza tekrar giriş yapmanız yeterlidir.</p>
+            <p>İyi günler dileriz.</p>
+            <p>W1 Ekibi</p>
+        `
+    };
+
+    try {
+        await transporter.sendMail(mailOptions);
+        console.log('Hesap silme talebi e-postası gönderildi.');
+    } catch (error) {
+        console.error('Hesap silme e-postası gönderilirken hata:', error);
+    }
+};
+
+// Silme İptal E-postası
+const sendDeletionCanceledEmail = async (email) => {
+    const mailOptions = {
+        from: process.env.EMAIL_USER,
+        to: email,
+        subject: 'W1 Hesap Silme İptal Edildi',
+        html: `
+            <p>Merhaba,</p>
+            <p>W1 hesabınız için başlattığınız kalıcı silme işlemi, hesabınıza tekrar giriş yapmanız nedeniyle iptal edilmiştir.</p>
+            <p>Hesabınızın verileri korunmaya devam etmektedir.</p>
+            <p>İyi günler dileriz.</p>
+            <p>W1 Ekibi</p>
+        `
+    };
+
+    try {
+        await transporter.sendMail(mailOptions);
+        console.log('Hesap silme iptal e-postası gönderildi.');
+    } catch (error) {
+        console.error('Hesap silme iptal e-postası gönderilirken hata:', error);
+    }
+};
+
+// Hesabı Kurtarma
+exports.cancelAccountDeletion = async (uid) => {
+    try {
+        await db.collection('users').doc(uid).update({
+            isPendingDeletion: FieldValue.delete(),
+            pendingDeletionDate: FieldValue.delete(),
+            deletionReason: FieldValue.delete()
+        });
+        console.log(`Hesap silme işlemi iptal edildi: ${uid}`);
+    } catch (error) {
+        console.error('Hesap kurtarma hatası:', error);
     }
 };
 
@@ -143,7 +203,7 @@ exports.login = async (req, res) => {
         const userRecord = await getAuth().getUserByEmail(userEmail);
 
         // Firebase REST API ile şifre doğrulaması
-        const apiKey = process.env.FIREBASE_API_KEY;
+        const apiKey = process.env.REACT_APP_REACT_APP_FIREBASE_API_KEY;
         const restApiUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
         const restApiResponse = await fetch(restApiUrl, {
             method: 'POST',
@@ -167,7 +227,15 @@ exports.login = async (req, res) => {
             await db.collection('users').doc(userRecord.uid).update({ isFrozen: false });
         }
 
-        // ✅ YENİ: Başarılı girişten sonra cihaz bilgilerini kaydet
+        // ✅ GÜNCELLEME: Eğer hesap silinme beklemedeyse, işlemi iptal et
+        const userDoc = await db.collection('users').doc(userRecord.uid).get();
+        if (userDoc.exists && userDoc.data().isPendingDeletion) {
+            console.log(`Silinme beklemesindeki hesap tekrar giriş yaptı. Silme işlemi iptal ediliyor: ${userRecord.email}`);
+            await this.cancelAccountDeletion(userRecord.uid);
+            await sendDeletionCanceledEmail(userRecord.email);
+        }
+
+        // Başarılı girişten sonra cihaz bilgilerini kaydet
         const ipAddress = req.clientIp;
         const userAgentString = req.useragent.source;
         await userController.saveLoginDevice(userRecord.uid, ipAddress, userAgentString);
@@ -298,7 +366,15 @@ exports.googleSignIn = async (req, res) => {
             await db.collection('users').doc(userRecord.uid).update({ isFrozen: false });
         }
 
-        // ✅ YENİ: Başarılı girişten sonra cihaz bilgilerini kaydet
+        // GÜNCELLEME: Eğer hesap silinme beklemedeyse, işlemi iptal et
+        const userDoc = await db.collection('users').doc(userRecord.uid).get();
+        if (userDoc.exists && userDoc.data().isPendingDeletion) {
+            console.log(`Silinme beklemesindeki hesap tekrar Google ile giriş yaptı. Silme işlemi iptal ediliyor: ${userRecord.email}`);
+            await this.cancelAccountDeletion(userRecord.uid);
+            await sendDeletionCanceledEmail(userRecord.email);
+        }
+
+        // Başarılı girişten sonra cihaz bilgilerini kaydet
         const ipAddress = req.clientIp;
         const userAgentString = req.useragent.source;
         await userController.saveLoginDevice(userRecord.uid, ipAddress, userAgentString);
@@ -339,5 +415,60 @@ exports.forgotPassword = async (req, res) => {
         }
         console.error('Şifre sıfırlama hatası:', error);
         return res.status(500).json({ error: 'Şifre sıfırlama sırasında bir hata oluştu.' });
+    }
+};
+
+// ✅ GÜNCELLEME: Hesabı Silme İşlemi Başlatma
+exports.requestAccountDeletion = async (req, res) => {
+    const { password, reason } = req.body;
+    const { uid } = req.user;
+
+    if (!password) {
+        return res.status(400).json({ error: 'Şifrenizi girmek zorunludur.' });
+    }
+
+    try {
+        const userRecord = await getAuth().getUser(uid);
+
+        // Firebase REST API kullanarak şifre doğrulaması yap
+        const apiKey = process.env.REACT_APP_FIREBASE_API_KEY;
+        if (!apiKey) {
+            console.error("REACT_APP_FIREBASE_API_KEY environment değişkeni tanımlı değil.");
+            return res.status(500).json({ error: "Sunucu yapılandırma hatası." });
+        }
+        
+        const restApiUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
+        const restApiResponse = await fetch(restApiUrl, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ email: userRecord.email, password, returnSecureToken: true }),
+        });
+
+        if (!restApiResponse.ok) {
+            // Şifre yanlışsa bu blok çalışır
+            return res.status(401).json({ error: 'Girilen şifre yanlış.' });
+        }
+        
+        // Kullanıcı hesabını "silinme beklemede" olarak işaretle
+        await db.collection('users').doc(uid).update({
+            isPendingDeletion: true,
+            pendingDeletionDate: FieldValue.serverTimestamp(),
+            deletionReason: reason || null
+            // ✅ SİLİNDİ: Hata veren 'deletionLog' satırı kaldırıldı.
+        });
+
+        // Tüm mevcut oturumları iptal et
+        await getAuth().revokeRefreshTokens(uid);
+
+        // Kullanıcıya bilgilendirme e-postası gönder
+        // await sendDeletionEmail(userRecord.email);
+
+        return res.status(200).json({
+            message: 'Hesabınız silinmek üzere işaretlendi. Bu süre içinde tekrar giriş yaparak işlemi iptal edebilirsiniz.'
+        });
+
+    } catch (error) {
+        console.error('Hesap silme isteği hatası:', error);
+        return res.status(500).json({ error: 'Hesap silme isteği sırasında bir hata oluştu.', details: error.message });
     }
 };
