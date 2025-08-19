@@ -472,3 +472,25 @@ exports.requestAccountDeletion = async (req, res) => {
         return res.status(500).json({ error: 'Hesap silme isteği sırasında bir hata oluştu.', details: error.message });
     }
 };
+
+// ✅ YENİ: Tüm cihazlardaki oturumları sonlandırma
+exports.logoutAllDevices = async (req, res) => {
+    const { uid } = req.user; // Token'dan gelen kullanıcı kimliği
+    try {
+        await getAuth().revokeRefreshTokens(uid);
+
+        // Kullanıcıya isteğe bağlı bilgilendirme e-postası gönderilebilir.
+        // const userRecord = await getAuth().getUser(uid);
+        // await sendLogoutAllEmail(userRecord.email);
+
+        // Güvenlik logu tutma
+        console.log(`[LOGOUT_ALL] Kullanıcı ${uid} tüm cihazlardaki oturumlarını sonlandırdı. Tarih: ${new Date()}`);
+
+        return res.status(200).json({
+            message: 'Tüm cihazlardaki oturumlarınız başarıyla kapatıldı.'
+        });
+    } catch (error) {
+        console.error('Tüm cihazlardan çıkış hatası:', error);
+        return res.status(500).json({ error: 'Tüm cihazlardan çıkış yapılırken bir hata oluştu.', details: error.message });
+    }
+};

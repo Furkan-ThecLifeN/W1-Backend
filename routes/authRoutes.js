@@ -8,7 +8,8 @@ const {
     resolveUserIdentifier,
     getProfile,
     googleSignIn,
-    requestAccountDeletion 
+    requestAccountDeletion,
+    logoutAllDevices
 } = require('../controllers/authController');
 const authController = require("../controllers/authController");
 
@@ -33,6 +34,10 @@ router.post('/forgot-password', authController.forgotPassword);
 
 // ✅ YENİ: Hesabı kalıcı olarak silme isteği
 router.post('/delete-account', verifyToken, requestAccountDeletion);
+
+// ✅ YENİ: Tüm cihazlardan çıkış yapma rotası
+router.post('/logoutAll', verifyToken, logoutAllDevices);
+
 
 
 
