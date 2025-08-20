@@ -182,6 +182,14 @@ exports.registerUser = async (req, res) => {
         messages: "everyone",
         storyReplies: true,
       },
+      notificationSettings: {
+        email: true,
+        push: true,
+        follows: true,
+        likes: true,
+        comments: true,
+        messages: true
+      }
     };
     await db.collection("users").doc(userRecord.uid).set(userProfile);
 
@@ -436,6 +444,14 @@ exports.googleSignIn = async (req, res) => {
           privacySettings: {
             messages: "everyone",
             storyReplies: true,
+          },
+          notificationSettings: {
+            email: true,
+            push: true,
+            follows: true,
+            likes: true,
+            comments: true,
+            messages: true,
           },
         };
         await db.collection("users").doc(userRecord.uid).set(userProfile);

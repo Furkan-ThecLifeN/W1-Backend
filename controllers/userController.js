@@ -212,83 +212,6 @@ exports.getLoginDevices = async (req, res) => {
     }
 };
 
-
-// Cihaz bilgilerini kaydetme
-exports.saveLoginDevice = async (req, res) => {
-    try {
-        const { uid } = req.user;
-        
-        // request-ip ve express-useragent'den gelen verileri kullan
-        const ip = req.clientIp || 'Bilinmiyor';
-        const userAgentInfo = req.useragent;
-
-        // Basitleştirilmiş cihaz ve tarayıcı bilgileri
-        let deviceType = 'Bilinmeyen Cihaz';
-        if (userAgentInfo.isDesktop) {
-            deviceType = 'Bilgisayar';
-        } else if (userAgentInfo.isMobile) {
-            deviceType = 'Mobil';
-        } else if (userAgentInfo.isTablet) {
-            deviceType = 'Tablet';
-        }
-
-        const browserName = userAgentInfo.browser || 'Bilinmeyen Tarayıcı';
-        const osName = userAgentInfo.os || 'Bilinmeyen OS';
-        
-        if (!uid) {
-            return res.status(401).json({ error: 'Yetkisiz erişim.' });
-        }
-
-        const deviceData = {
-            ip,
-            device: deviceType,
-            browser: browserName,
-            os: osName,
-            loggedInAt: FieldValue.serverTimestamp()
-        };
-
-        const userDocRef = db.collection('users').doc(uid);
-        await userDocRef.collection('devices').add(deviceData);
-        
-        return res.status(200).json({ message: 'Cihaz bilgileri başarıyla kaydedildi.' });
-
-    } catch (error) {
-        console.error('Cihaz kaydetme hatası:', error);
-        return res.status(500).json({ error: 'Cihaz bilgileri kaydedilirken hata oluştu.', details: error.message });
-    }
-};
-
-// Giriş yapılan cihazları getirme
-exports.getLoginDevices = async (req, res) => {
-    try {
-        const { uid } = req.user;
-
-        const devicesSnapshot = await db.collection('loginHistory')
-            .where('userId', '==', uid)
-            .orderBy('timestamp', 'desc')
-            .get();
-
-        const devices = devicesSnapshot.docs.map(doc => {
-            const data = doc.data();
-            const timestamp = data.timestamp && data.timestamp.toDate
-                ? data.timestamp.toDate()
-                : null;
-            
-            return {
-                ...data,
-                id: doc.id,
-                timestamp: timestamp
-            };
-        });
-
-        return res.status(200).json({ devices });
-
-    } catch (error) {
-        console.error('Cihaz geçmişi alınırken hata:', error);
-        return res.status(500).json({ error: `Cihaz geçmişi alınırken bir hata oluştu. Detay: ${error.message}` });
-    }
-};
-
 // ✅ YENİ: Hesap gizliliği (isPrivate) ayarını güncelleme
 exports.updatePrivacySettings = async (req, res) => {
     try {
@@ -411,4 +334,87 @@ exports.updateHideLikesSetting = async (req, res) => {
         console.error('Beğenileri gizleme ayarı güncelleme hatası:', error);
         return res.status(500).json({ error: 'Ayarlar güncellenirken bir hata oluştu.' });
     }
+};
+
+/**
+ * Kullanıcının bildirim ayarlarını getirir.
+ * @param {object} req - Express Request nesnesi.
+ * @param {object} res - Express Response nesnesi.
+ */
+exports.getUserNotificationSettings = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const userDocRef = db.collection('users').doc(uid);
+    const userDoc = await userDocRef.get();
+
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: "Kullanıcı bulunamadı." });
+    }
+
+    // Varsayılan ayarları tanımla
+    const defaultSettings = {
+      email: true,
+      push: false,
+      follows: true,
+      likes: true,
+      comments: true,
+      messages: true
+    };
+
+    // Mevcut ayarları al veya varsayılanları kullan
+    const settings = userDoc.data().notificationSettings || defaultSettings;
+
+    return res.status(200).json({ settings });
+
+  } catch (error) {
+    console.error("Bildirim ayarlarını getirme hatası:", error);
+    return res.status(500).json({ error: "Bildirim ayarları alınırken bir hata oluştu." });
+  }
+};
+
+/**
+ * Kullanıcının bildirim ayarlarını günceller.
+ * @param {object} req - Express Request nesnesi.
+ * @param {object} res - Express Response nesnesi.
+ */
+exports.updateUserNotificationSettings = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const updates = req.body;
+
+    if (!updates || Object.keys(updates).length === 0) {
+      return res.status(400).json({ error: "Güncellenecek ayar bulunamadı." });
+    }
+
+    const userDocRef = db.collection('users').doc(uid);
+    const userDoc = await userDocRef.get();
+    
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: "Kullanıcı bulunamadı." });
+    }
+
+    const currentSettings = userDoc.data().notificationSettings || {};
+    const newSettings = {
+      ...currentSettings,
+      ...updates
+    };
+
+    // Güncellemeyi Firestore'a yaz
+    await userDocRef.update({ 
+      notificationSettings: newSettings,
+      "lastChangeDates.notificationSettings": admin.firestore.FieldValue.serverTimestamp()
+    });
+
+    // Profesyonel Ekstra: Loglama
+    console.log(`Bildirim ayarları güncellendi. Kullanıcı ID: ${uid}, Değişiklikler: ${JSON.stringify(updates)}`);
+
+    return res.status(200).json({
+      message: "Bildirim ayarları başarıyla güncellendi.",
+      settings: newSettings
+    });
+
+  } catch (error) {
+    console.error("Bildirim ayarlarını güncelleme hatası:", error);
+    return res.status(500).json({ error: "Bildirim ayarları güncellenirken bir hata oluştu." });
+  }
 };
