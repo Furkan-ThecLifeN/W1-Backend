@@ -8,13 +8,11 @@ const {
     updateProfile,
     saveLoginDevice,
     getLoginDevices,
-    // Eski gizlilik ayarı güncelleme fonksiyonu
     updatePrivacySettings, 
-    // Yeni gizlilik ayarı çekme fonksiyonu
     getPrivacySettings,
-    // Yeni spesifik güncelleme fonksiyonları
     updateMessagesPrivacy,
-    updateStoryRepliesPrivacy
+    updateStoryRepliesPrivacy,
+    updateHideLikesSetting 
 } = require('../controllers/userController');
 
 // Kullanıcı profilini güncelleme (POST isteği, token ile korumalı)
@@ -37,5 +35,8 @@ router.patch('/privacy/messages', verifyToken, updateMessagesPrivacy);
 
 // ✅ YENİ: Hikaye yanıt izinlerini güncelle
 router.patch('/privacy/storyReplies', verifyToken, updateStoryRepliesPrivacy);
+
+// ✅ YENİ: Beğenileri gizleme ayarını güncelleme
+router.patch('/settings/hide-likes', verifyToken, updateHideLikesSetting);
 
 module.exports = router;

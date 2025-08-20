@@ -375,3 +375,40 @@ exports.updateStoryRepliesPrivacy = async (req, res) => {
         return res.status(500).json({ error: 'Hikaye yanıt gizlilik ayarları güncellenirken bir hata oluştu.', details: error.message });
     }
 };
+
+// ✅ YENİ: Beğenileri gizleme ayarını güncelleme
+exports.updateHideLikesSetting = async (req, res) => {
+    try {
+        const { uid } = req.user;
+        const { hideLikes } = req.body;
+
+        if (typeof hideLikes !== 'boolean') {
+            return res.status(400).json({ error: 'Geçersiz değer. "hideLikes" bir boolean olmalıdır.' });
+        }
+
+        const userDocRef = db.collection('users').doc(uid);
+        const userDoc = await userDocRef.get();
+
+        if (!userDoc.exists) {
+            return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
+        }
+
+        // Sadece gizlilik ayarı altındaki hideLikes alanını günceller
+        await userDocRef.update({
+            'privacySettings.hideLikes': hideLikes
+        });
+
+        // Güncellenmiş kullanıcı verisini döndür
+        const updatedUserDoc = await userDocRef.get();
+        const updatedUser = updatedUserDoc.data();
+
+        return res.status(200).json({ 
+            message: 'Beğenileri gizleme ayarı başarıyla güncellendi.', 
+            profile: updatedUser 
+        });
+
+    } catch (error) {
+        console.error('Beğenileri gizleme ayarı güncelleme hatası:', error);
+        return res.status(500).json({ error: 'Ayarlar güncellenirken bir hata oluştu.' });
+    }
+};
