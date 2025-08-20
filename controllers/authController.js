@@ -146,6 +146,7 @@ exports.registerUser = async (req, res) => {
             bio: '',
             familySystem: null,
             accountType: 'personal',
+            isPrivate: false,
             isFrozen: false,
             createdAt: serverTimestamp(),
             stats: {
@@ -338,6 +339,7 @@ exports.googleSignIn = async (req, res) => {
                     bio: '',
                     familySystem: null,
                     accountType: 'personal',
+                    isPrivate: false,
                     isFrozen: false,
                     createdAt: serverTimestamp(),
                     stats: {

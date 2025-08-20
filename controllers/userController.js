@@ -288,3 +288,29 @@ exports.getLoginDevices = async (req, res) => {
         return res.status(500).json({ error: `Cihaz geçmişi alınırken bir hata oluştu. Detay: ${error.message}` });
     }
 };
+
+// ✅ YENİ: Hesap gizliliği (isPrivate) ayarını güncelleme
+exports.updatePrivacySettings = async (req, res) => {
+    try {
+        const { uid } = req.user;
+        const { isPrivate } = req.body;
+
+        if (typeof isPrivate !== 'boolean') {
+            return res.status(400).json({ error: 'Geçersiz gizlilik durumu.' });
+        }
+
+        const userDocRef = db.collection('users').doc(uid);
+        await userDocRef.update({
+            isPrivate: isPrivate
+        });
+
+        // 📌 Opsiyonel: Gizlilik ayarı değişikliğini loglamak
+        console.log(`[PRIVACY_UPDATE] Kullanıcı ${uid} hesabını ${isPrivate ? 'gizli' : 'herkese açık'} yaptı.`);
+
+        return res.status(200).json({ message: 'Gizlilik ayarları başarıyla güncellendi.', isPrivate: isPrivate });
+
+    } catch (error) {
+        console.error('Gizlilik ayarları güncelleme hatası:', error);
+        return res.status(500).json({ error: 'Gizlilik ayarları güncellenirken bir hata oluştu.', details: error.message });
+    }
+};
