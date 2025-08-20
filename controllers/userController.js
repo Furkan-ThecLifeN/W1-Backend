@@ -314,3 +314,64 @@ exports.updatePrivacySettings = async (req, res) => {
         return res.status(500).json({ error: 'Gizlilik ayarları güncellenirken bir hata oluştu.', details: error.message });
     }
 };
+
+// ✅ YENİ: Gizlilik ayarlarını getirme
+exports.getPrivacySettings = async (req, res) => {
+    try {
+        const { id } = req.params;
+        const userDocRef = db.collection('users').doc(id);
+        const userDoc = await userDocRef.get();
+
+        if (!userDoc.exists) {
+            return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
+        }
+
+        const { privacySettings } = userDoc.data();
+        return res.status(200).json(privacySettings);
+    } catch (error) {
+        console.error('Gizlilik ayarları çekme hatası:', error);
+        return res.status(500).json({ error: 'Gizlilik ayarları çekilirken bir hata oluştu.', details: error.message });
+    }
+};
+
+// ✅ YENİ: Mesaj izinlerini güncelleme
+exports.updateMessagesPrivacy = async (req, res) => {
+    try {
+        const { uid } = req.user;
+        const { messages } = req.body;
+
+        if (!['everyone', 'followers', 'no'].includes(messages)) {
+            return res.status(400).json({ error: 'Geçersiz mesaj gizlilik ayarı.' });
+        }
+
+        await db.collection('users').doc(uid).update({
+            'privacySettings.messages': messages
+        });
+
+        return res.status(200).json({ message: 'Mesaj izinleri başarıyla güncellendi.', messages });
+    } catch (error) {
+        console.error('Mesaj gizlilik ayarları güncelleme hatası:', error);
+        return res.status(500).json({ error: 'Mesaj gizlilik ayarları güncellenirken bir hata oluştu.', details: error.message });
+    }
+};
+
+// ✅ YENİ: Hikaye yanıt izinlerini güncelleme
+exports.updateStoryRepliesPrivacy = async (req, res) => {
+    try {
+        const { uid } = req.user;
+        const { storyReplies } = req.body;
+
+        if (typeof storyReplies !== 'boolean') {
+            return res.status(400).json({ error: 'Geçersiz hikaye yanıt gizlilik ayarı.' });
+        }
+
+        await db.collection('users').doc(uid).update({
+            'privacySettings.storyReplies': storyReplies
+        });
+
+        return res.status(200).json({ message: 'Hikaye yanıt izinleri başarıyla güncellendi.', storyReplies });
+    } catch (error) {
+        console.error('Hikaye yanıt gizlilik ayarları güncelleme hatası:', error);
+        return res.status(500).json({ error: 'Hikaye yanıt gizlilik ayarları güncellenirken bir hata oluştu.', details: error.message });
+    }
+};
