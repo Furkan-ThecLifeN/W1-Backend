@@ -14,7 +14,8 @@ const {
   updateStoryRepliesPrivacy,
   updateHideLikesSetting,
   getUserNotificationSettings, 
-  updateUserNotificationSettings
+  updateUserNotificationSettings,
+  searchUsers
 } = require("../controllers/userController");
 
 // Kullanıcı profilini güncelleme (POST isteği, token ile korumalı)
@@ -44,5 +45,8 @@ router.patch("/settings/hide-likes", verifyToken, updateHideLikesSetting);
 // ✅ Yeni: Bildirim ayarlarını getirme ve güncelleme rotaları
 router.get('/notifications/settings', verifyToken, getUserNotificationSettings);
 router.patch('/notifications/settings', verifyToken, updateUserNotificationSettings);
+
+// ✅ Yeni: Kullanıcı arama rotası
+router.get("/search", verifyToken, searchUsers);
 
 module.exports = router;

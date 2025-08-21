@@ -418,3 +418,41 @@ exports.updateUserNotificationSettings = async (req, res) => {
     return res.status(500).json({ error: "Bildirim ayarları güncellenirken bir hata oluştu." });
   }
 };
+
+// ✅ YENİ: Kullanıcı arama rotası
+exports.searchUsers = async (req, res) => {
+    try {
+        const { search } = req.query;
+        const { uid: currentUserId } = req.user; // Oturum açmış kullanıcının UID'sini al
+        
+        if (!search) {
+            return res.status(400).json({ error: 'Arama metni gerekli.' });
+        }
+
+        const usersRef = db.collection('users');
+        const usernameQuery = usersRef
+            .where('username', '>=', search)
+            .where('username', '<=', search + '\uf8ff')
+            .limit(20);
+
+        const snapshot = await usernameQuery.get();
+        const users = [];
+        snapshot.forEach(doc => {
+            // Kendi profilini sonuçlardan hariç tut
+            if (doc.id !== currentUserId) {
+                const userData = doc.data();
+                users.push({
+                    uid: userData.uid,
+                    username: userData.username,
+                    photoURL: userData.photoURL,
+                    bio: userData.bio || '',
+                });
+            }
+        });
+
+        return res.status(200).json({ users });
+    } catch (error) {
+        console.error("Kullanıcı arama hatası:", error);
+        return res.status(500).json({ error: "Kullanıcılar aranırken bir hata oluştu.", details: error.message });
+    }
+};
