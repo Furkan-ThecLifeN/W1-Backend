@@ -111,25 +111,35 @@ exports.cancelAccountDeletion = async (uid) => {
 
 // Kullanıcı Kaydı
 exports.registerUser = async (req, res) => {
-  const { email, password, username, displayName } = req.body;
+  const {
+    email,
+    password,
+    username,
+    firstName,
+    lastName,
+    displayName: reqDisplayName,
+    photoURL,
+    phoneNumber,
+    ...otherFields
+  } = req.body;
 
+  // Temel alan kontrolü
   if (!email || !password || !username) {
     return res
       .status(400)
       .json({ error: "E-posta, şifre ve kullanıcı adı gerekli." });
   }
 
+  // Email, username ve password validasyonu
   if (!isValidEmail(email)) {
     return res.status(400).json({ error: "Geçersiz e-posta formatı." });
   }
-
   if (!isValidUsername(username)) {
     return res.status(400).json({
       error:
         "Kullanıcı adı en az 3, en fazla 15 karakter olmalı ve sadece harf, rakam ve alt çizgi içerebilir.",
     });
   }
-
   if (!isValidPassword(password)) {
     return res.status(400).json({
       error:
@@ -138,6 +148,7 @@ exports.registerUser = async (req, res) => {
   }
 
   try {
+    // Username kontrolü
     const usernameExists = await db
       .collection("users")
       .where("username", "==", username)
@@ -148,25 +159,36 @@ exports.registerUser = async (req, res) => {
         .json({ error: "Bu kullanıcı adı zaten kullanılıyor." });
     }
 
+    // DisplayName oluşturma: öncelik req.body.displayName, sonra firstName+lastName, yoksa username
+    const displayName =
+      reqDisplayName || (firstName && lastName ? `${firstName} ${lastName}` : username);
+
+    // Firebase Auth kaydı
     const userRecord = await auth.createUser({
-      email: email,
-      password: password,
-      displayName: displayName || username,
+      email,
+      password,
+      displayName,
+      phoneNumber: phoneNumber || undefined,
+      photoURL: photoURL || undefined,
     });
 
+    const uid = userRecord.uid;
+
+    // Firestore kullanıcı profili
     const userProfile = {
-      uid: userRecord.uid,
+      uid,
       email: userRecord.email,
-      username: username,
-      displayName: displayName || username,
+      username,
+      displayName,
       photoURL:
+        photoURL ||
         "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png",
       bio: "",
       familySystem: null,
       accountType: "personal",
       isPrivate: false,
       isFrozen: false,
-      createdAt: serverTimestamp(),
+      createdAt: FieldValue.serverTimestamp(),
       stats: {
         posts: 0,
         rta: 0,
@@ -174,9 +196,9 @@ exports.registerUser = async (req, res) => {
         following: 0,
       },
       lastChangeDates: {
-        username: serverTimestamp(),
-        email: serverTimestamp(),
-        password: serverTimestamp(),
+        username: FieldValue.serverTimestamp(),
+        email: FieldValue.serverTimestamp(),
+        password: FieldValue.serverTimestamp(),
       },
       privacySettings: {
         messages: "everyone",
@@ -188,30 +210,20 @@ exports.registerUser = async (req, res) => {
         follows: true,
         likes: true,
         comments: true,
-        messages: true
-      }
+        messages: true,
+      },
+      ...otherFields,
     };
-    await db.collection("users").doc(userRecord.uid).set(userProfile);
 
-    await sendWelcomeEmail(email, username);
+    await db.collection("users").doc(uid).set(userProfile);
 
-    return res.status(201).json({
-      message: "Kullanıcı başarıyla kaydedildi.",
-      user: { uid: userRecord.uid, email: userRecord.email },
-    });
+    res.status(201).json({ uid, message: "Kullanıcı başarıyla kaydedildi" });
   } catch (error) {
     console.error("Kayıt hatası:", error);
-    if (error.code === "auth/email-already-in-use") {
-      return res
-        .status(409)
-        .json({ error: "Bu e-posta adresi zaten kullanılıyor." });
-    }
-    return res.status(500).json({
-      error: "Kayıt sırasında bir hata oluştu.",
-      details: error.message,
-    });
+    res.status(500).json({ error: "Sunucu hatası: " + error.message });
   }
 };
+
 
 // Kullanıcı Girişi
 exports.login = async (req, res) => {
@@ -429,7 +441,7 @@ exports.googleSignIn = async (req, res) => {
           accountType: "personal",
           isPrivate: false,
           isFrozen: false,
-          createdAt: serverTimestamp(),
+          createdAt: FieldValue.serverTimestamp(), // Bu satırı değiştirin
           stats: {
             posts: 0,
             rta: 0,
@@ -437,9 +449,9 @@ exports.googleSignIn = async (req, res) => {
             following: 0,
           },
           lastChangeDates: {
-            username: serverTimestamp(),
-            email: serverTimestamp(),
-            password: serverTimestamp(),
+            username: FieldValue.serverTimestamp(), // Bunu da değiştirin
+            email: FieldValue.serverTimestamp(), // Bunu da değiştirin
+            password: FieldValue.serverTimestamp(), // Bunu da değiştirin
           },
           privacySettings: {
             messages: "everyone",

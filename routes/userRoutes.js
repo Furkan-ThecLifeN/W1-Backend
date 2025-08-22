@@ -13,40 +13,54 @@ const {
   updateMessagesPrivacy,
   updateStoryRepliesPrivacy,
   updateHideLikesSetting,
-  getUserNotificationSettings, 
+  getUserNotificationSettings,
   updateUserNotificationSettings,
-  searchUsers
+  searchUsers,
+  getProfileByUsername,
+  getFollowStatus,
+  followUser,
+  unfollowUser,
+  retractFollowRequest,
+  acceptFollowRequest,
+  rejectFollowRequest,
+  sendMessage,
+  getNotifications,
 } = require("../controllers/userController");
 
-// Kullanıcı profilini güncelleme (POST isteği, token ile korumalı)
+// Profil ve Hesap Ayarları
 router.post("/profile/update", verifyToken, updateProfile);
+router.get("/profile/:username", verifyToken, getProfileByUsername);
 
-// ✅ Giriş yapılan cihazları kaydetme
+// Cihaz Yönetimi
 router.post("/devices/save", verifyToken, saveLoginDevice);
-
-// ✅ Giriş yapılan cihazları getirme
 router.get("/devices", verifyToken, getLoginDevices);
 
-// ✅ Eski gizlilik ayarını güncelleme (genel rota)
+// Gizlilik ve Ayarlar
 router.patch("/privacy", verifyToken, updatePrivacySettings);
-
-// ✅ YENİ: Kullanıcının gizlilik ayarlarını çek
 router.get("/:id/privacy", getPrivacySettings);
-
-// ✅ YENİ: Mesaj izinlerini güncelle
 router.patch("/privacy/messages", verifyToken, updateMessagesPrivacy);
-
-// ✅ YENİ: Hikaye yanıt izinlerini güncelle
 router.patch("/privacy/storyReplies", verifyToken, updateStoryRepliesPrivacy);
-
-// ✅ YENİ: Beğenileri gizleme ayarını güncelleme
 router.patch("/settings/hide-likes", verifyToken, updateHideLikesSetting);
 
-// ✅ Yeni: Bildirim ayarlarını getirme ve güncelleme rotaları
-router.get('/notifications/settings', verifyToken, getUserNotificationSettings);
-router.patch('/notifications/settings', verifyToken, updateUserNotificationSettings);
+// Bildirimler
+router.get("/notifications/settings", verifyToken, getUserNotificationSettings);
+router.patch("/notifications/settings", verifyToken, updateUserNotificationSettings);
+router.get("/notifications", verifyToken, getNotifications);
 
-// ✅ Yeni: Kullanıcı arama rotası
+// Takip İşlemleri
+router.get("/profile/:targetUid/status", verifyToken, getFollowStatus);
+router.post("/follow", verifyToken, followUser);
+router.delete("/unfollow/:targetUid", verifyToken, unfollowUser);
+router.delete("/follow/request/retract", verifyToken, retractFollowRequest);
+// ✅ Düzeltildi: Rota yolu /follow/accept olarak değiştirildi
+router.post("/follow/accept/:requesterUid", verifyToken, acceptFollowRequest);
+// ✅ Düzeltildi: Rota yolu /follow/reject olarak değiştirildi
+router.post("/follow/reject/:requesterUid", verifyToken, rejectFollowRequest);
+
+// Mesajlaşma
+router.post("/message", verifyToken, sendMessage);
+
+// Arama
 router.get("/search", verifyToken, searchUsers);
 
 module.exports = router;
