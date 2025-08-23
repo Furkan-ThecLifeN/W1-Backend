@@ -369,10 +369,13 @@ exports.resolveUserIdentifier = async (req, res) => {
 // Profil görüntüleme
 exports.getProfile = async (req, res) => {
   try {
-    const { uid } = req.user;
+    const { uid } = req.user; // verifyToken middleware'i ile gelen uid
     const userDoc = await db.collection("users").doc(uid).get();
-    if (!userDoc.exists)
+
+    if (!userDoc.exists) {
       return res.status(404).json({ error: "Kullanıcı profili bulunamadı." });
+    }
+
     return res.status(200).json({ profile: userDoc.data() });
   } catch (error) {
     console.error("Profil getirme hatası:", error);
