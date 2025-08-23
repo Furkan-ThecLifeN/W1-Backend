@@ -1,5 +1,3 @@
-// W1-Backend/routes/userRoutes.js
-
 const express = require("express");
 const router = express.Router();
 const verifyToken = require("../middlewares/verifyToken");
@@ -25,6 +23,9 @@ const {
   rejectFollowRequest,
   sendMessage,
   getNotifications,
+  getFollowers,
+  getFollowing,
+  getPendingRequests,
 } = require("../controllers/userController");
 
 // Profil ve Hesap Ayarları
@@ -52,10 +53,11 @@ router.get("/profile/:targetUid/status", verifyToken, getFollowStatus);
 router.post("/follow", verifyToken, followUser);
 router.delete("/unfollow/:targetUid", verifyToken, unfollowUser);
 router.delete("/follow/request/retract", verifyToken, retractFollowRequest);
-// ✅ Düzeltildi: Rota yolu /follow/accept olarak değiştirildi
 router.post("/follow/accept/:requesterUid", verifyToken, acceptFollowRequest);
-// ✅ Düzeltildi: Rota yolu /follow/reject olarak değiştirildi
 router.post("/follow/reject/:requesterUid", verifyToken, rejectFollowRequest);
+router.get("/:targetUid/followers", verifyToken, getFollowers);
+router.get("/:targetUid/following", verifyToken, getFollowing);
+router.get("/requests/pending", verifyToken, getPendingRequests);
 
 // Mesajlaşma
 router.post("/message", verifyToken, sendMessage);

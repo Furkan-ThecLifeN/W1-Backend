@@ -1143,3 +1143,160 @@ exports.getNotifications = async (req, res) => {
     res.status(500).json({ error: "Bildirimler yüklenemedi." });
   }
 };
+
+// ✅ YENİ: Belirli bir kullanıcının takipçilerini getirme
+exports.getFollowers = async (req, res) => {
+  try {
+    const { targetUid } = req.params;   // URL parametresinden hedef UID
+    const currentUid = req.user.uid;    // middleware’den gelen giriş yapmış kullanıcı UID
+
+    // ✅ Hedef kullanıcının profilini al
+    const targetUserDoc = await db.collection("users").doc(targetUid).get();
+    if (!targetUserDoc.exists) {
+      return res.status(404).json({ error: "Kullanıcı bulunamadı." });
+    }
+
+    const targetUserData = targetUserDoc.data();
+    const isTargetPrivate = targetUserData.isPrivate;
+
+    // ✅ Eğer hedef hesap gizliyse ve mevcut kullanıcı onu takip etmiyorsa erişimi engelle
+    if (isTargetPrivate && currentUid !== targetUid) {
+      const isFollowing = await db
+        .collection("follows")
+        .where("followerUid", "==", currentUid)
+        .where("followingUid", "==", targetUid)
+        .get();
+
+      if (isFollowing.empty) {
+        return res
+          .status(403)
+          .json({ error: "Bu hesabı görüntülemek için takip etmelisiniz." });
+      }
+    }
+
+    // ✅ Hedef kullanıcının takipçilerini getir
+    const followersSnapshot = await db
+      .collection("follows")
+      .where("followingUid", "==", targetUid)
+      .get();
+
+    if (followersSnapshot.empty) {
+      return res.status(200).json({ followers: [] });
+    }
+
+    const followerUids = followersSnapshot.docs.map(
+      (doc) => doc.data().followerUid
+    );
+
+    // ✅ UID listesi ile kullanıcı profillerini çek
+    const usersSnapshot = await db
+      .collection("users")
+      .where(admin.firestore.FieldPath.documentId(), "in", followerUids)
+      .get();
+
+    const followers = usersSnapshot.docs.map((doc) => ({
+      uid: doc.id,
+      ...doc.data(),
+    }));
+
+    return res.status(200).json({ followers });
+  } catch (error) {
+    console.error("Takipçi listesi getirme hatası:", error);
+    return res.status(500).json({
+      error: "Takipçi listesi alınırken bir hata oluştu.",
+    });
+  }
+};
+
+
+// ✅ YENİ: Belirli bir kullanıcının takip ettiklerini getirme
+exports.getFollowing = async (req, res) => {
+  try {
+    const { targetUid } = req.params;
+    const currentUid = req.user.uid;
+
+    const targetUserDoc = await db.collection("users").doc(targetUid).get();
+    if (!targetUserDoc.exists) {
+      return res.status(404).json({ error: "Kullanıcı bulunamadı." });
+    }
+    const targetUserData = targetUserDoc.data();
+    const isTargetPrivate = targetUserData.isPrivate;
+
+    if (isTargetPrivate && currentUid !== targetUid) {
+      const isFollowing = await db
+        .collection("follows")
+        .where("followerUid", "==", currentUid)
+        .where("followingUid", "==", targetUid)
+        .get();
+
+      if (isFollowing.empty) {
+        return res
+          .status(403)
+          .json({ error: "Bu hesabı görüntülemek için takip etmelisiniz." });
+      }
+    }
+
+    const followingSnapshot = await db
+      .collection("follows")
+      .where("followerUid", "==", targetUid)
+      .get();
+
+    if (followingSnapshot.empty) {
+      return res.status(200).json({ following: [] });
+    }
+
+    const followingUids = followingSnapshot.docs.map((doc) => doc.data().followingUid);
+
+    const usersSnapshot = await db
+      .collection("users")
+      .where(admin.firestore.FieldPath.documentId(), "in", followingUids)
+      .get();
+
+    const following = usersSnapshot.docs.map((doc) => ({
+      uid: doc.id,
+      ...doc.data(),
+    }));
+
+    return res.status(200).json({ following });
+  } catch (error) {
+    console.error("Takip edilenler listesi getirme hatası:", error);
+    res
+      .status(500)
+      .json({ error: "Takip edilenler listesi alınırken bir hata oluştu." });
+  }
+};
+
+// ✅ YENİ: Kullanıcının bekleyen takip isteklerini getirme
+exports.getPendingRequests = async (req, res) => {
+  try {
+    const { uid } = req.user;
+
+    const requestsSnapshot = await db
+      .collection("followRequests")
+      .where("receiverUid", "==", uid)
+      .get();
+
+    if (requestsSnapshot.empty) {
+      return res.status(200).json({ requests: [] });
+    }
+
+    const senderUids = requestsSnapshot.docs.map((doc) => doc.data().senderUid);
+
+    const usersSnapshot = await db
+      .collection("users")
+      .where(admin.firestore.FieldPath.documentId(), "in", senderUids)
+      .get();
+
+    const senders = usersSnapshot.docs.map((doc) => ({
+      uid: doc.id,
+      ...doc.data(),
+    }));
+
+    return res.status(200).json({ requests: senders });
+  } catch (error) {
+    console.error("Bekleyen istekleri getirme hatası:", error);
+    res
+      .status(500)
+      .json({ error: "Bekleyen takip istekleri alınırken bir hata oluştu." });
+  }
+};
