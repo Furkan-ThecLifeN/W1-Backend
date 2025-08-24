@@ -1,5 +1,4 @@
 // controllers/messageController.js
-
 const { db, admin } = require("../config/firebase");
 const { getStorage } = require("firebase-admin/storage");
 const { FieldValue } = require("firebase-admin/firestore");
@@ -14,7 +13,6 @@ exports.getConversations = async (req, res) => {
   try {
     const { uid } = req.user;
 
-    // Kullanıcının takip ettikleri ve takipçileri listesini al
     const userDoc = await db.collection("users").doc(uid).get();
     if (!userDoc.exists) {
       return res.status(404).json({ error: "Kullanıcı bulunamadı." });
@@ -23,17 +21,16 @@ exports.getConversations = async (req, res) => {
     const followingList = userDoc.data().following || [];
     const followersList = userDoc.data().followers || [];
 
-    // Karşılıklı takipleşilen kullanıcıları bul
-    const mutualFollowers = followingList.filter(userId => followersList.includes(userId));
+    const mutualFollowers = followingList.filter(userId =>
+      followersList.includes(userId)
+    );
 
-    // Mesajlaşma geçmişini al
     const conversationsRef = db.collection("conversations");
     const myConversationsSnapshot = await conversationsRef
       .where("members", "array-contains", uid)
       .orderBy("updatedAt", "desc")
       .get();
-    
-    // Mesajlaşılan kişileri ve conversation verilerini topla
+
     const messagedUsers = new Set();
     const conversationDataMap = new Map();
     for (const doc of myConversationsSnapshot.docs) {
@@ -43,16 +40,18 @@ exports.getConversations = async (req, res) => {
       conversationDataMap.set(otherUserId, data);
     }
 
-    // Karşılıklı takip edilenler ve mesajlaşılan kişilerin birleşimini al
     const usersToFetch = [...new Set([...mutualFollowers, ...messagedUsers])];
-    if (usersToFetch.length === 0) return res.status(200).json({ conversations: [] });
+    if (usersToFetch.length === 0)
+      return res.status(200).json({ conversations: [] });
 
-    // İlgili kullanıcıların profil bilgilerini toplu olarak çek
-    const userDocs = await db.collection("users")
+    const userDocs = await db
+      .collection("users")
       .where(admin.firestore.FieldPath.documentId(), "in", usersToFetch)
       .get();
     const profiles = {};
-    userDocs.forEach(doc => { profiles[doc.id] = doc.data(); });
+    userDocs.forEach(doc => {
+      profiles[doc.id] = doc.data();
+    });
 
     const conversations = usersToFetch.map(userId => {
       const profile = profiles[userId] || {};
@@ -60,7 +59,9 @@ exports.getConversations = async (req, res) => {
 
       return {
         uid: userId,
-        conversationId: conversationData ? conversationData.conversationId : getConversationId(uid, userId),
+        conversationId: conversationData
+          ? conversationData.conversationId
+          : getConversationId(uid, userId),
         displayName: profile.displayName || profile.username,
         photoURL: profile.photoURL,
         lastMessage: conversationData ? conversationData.lastMessage : null,
@@ -68,7 +69,6 @@ exports.getConversations = async (req, res) => {
       };
     });
 
-    // Son mesajı olanları en üste getirmek için sırala
     conversations.sort((a, b) => {
       const aTime = a.updatedAt ? a.updatedAt.seconds : 0;
       const bTime = b.updatedAt ? b.updatedAt.seconds : 0;
@@ -78,7 +78,9 @@ exports.getConversations = async (req, res) => {
     return res.status(200).json({ conversations });
   } catch (error) {
     console.error("Konuşmaları getirme hatası:", error);
-    return res.status(500).json({ error: "Konuşmaları getirirken bir hata oluştu." });
+    return res
+      .status(500)
+      .json({ error: "Konuşmaları getirirken bir hata oluştu." });
   }
 };
 
@@ -91,33 +93,43 @@ exports.getMessages = async (req, res) => {
 
     const [user1Id, user2Id] = conversationId.split("_");
     if (user1Id !== uid && user2Id !== uid) {
-      return res.status(403).json({ error: "Bu konuşmaya erişim izniniz yok." });
+      return res
+        .status(403)
+        .json({ error: "Bu konuşmaya erişim izniniz yok." });
     }
 
-    let queryRef = db.collection("conversations")
+    let queryRef = db
+      .collection("conversations")
       .doc(conversationId)
       .collection("messages")
       .orderBy("createdAt", "desc")
       .limit(parseInt(limit));
 
     if (startAfter) {
-      const lastDoc = await db.collection("conversations")
+      const lastDoc = await db
+        .collection("conversations")
         .doc(conversationId)
         .collection("messages")
         .doc(startAfter)
         .get();
 
-      if (!lastDoc.exists) return res.status(404).json({ error: "Başlangıç belgesi bulunamadı." });
+      if (!lastDoc.exists)
+        return res.status(404).json({ error: "Başlangıç belgesi bulunamadı." });
       queryRef = queryRef.startAfter(lastDoc);
     }
 
     const snapshot = await queryRef.get();
-    const messages = snapshot.docs.map(doc => ({ id: doc.id, ...doc.data() }));
+    const messages = snapshot.docs.map(doc => ({
+      id: doc.id,
+      ...doc.data(),
+    }));
 
     return res.status(200).json({ messages });
   } catch (error) {
     console.error("Mesajları getirme hatası:", error);
-    return res.status(500).json({ error: "Mesajlar getirilirken bir hata oluştu." });
+    return res
+      .status(500)
+      .json({ error: "Mesajlar getirilirken bir hata oluştu." });
   }
 };
 
@@ -127,8 +139,15 @@ exports.sendMessage = async (req, res) => {
     const { uid } = req.user;
     const { receiverId, text, file, audio } = req.body;
 
+    if (!receiverId) {
+      return res.status(400).json({ error: "Alıcı bilgisi zorunludur." });
+    }
+
     const conversationId = getConversationId(uid, receiverId);
-    const messagesCollection = db.collection("conversations").doc(conversationId).collection("messages");
+    const messagesCollection = db
+      .collection("conversations")
+      .doc(conversationId)
+      .collection("messages");
 
     const batch = db.batch();
 
@@ -144,9 +163,11 @@ exports.sendMessage = async (req, res) => {
 
     batch.set(newMessageRef, messageData);
 
-    const conversationDocRef = db.collection("conversations").doc(conversationId);
+    const conversationDocRef = db
+      .collection("conversations")
+      .doc(conversationId);
     const lastMessage = {
-      text: text || (file ? "Dosya" : (audio ? "Sesli Mesaj" : "...")),
+      text: text || (file ? "Dosya" : audio ? "Sesli Mesaj" : "..."),
       senderId: uid,
       updatedAt: FieldValue.serverTimestamp(),
     };
@@ -162,11 +183,13 @@ exports.sendMessage = async (req, res) => {
 
     return res.status(201).json({
       message: "Mesaj başarıyla gönderildi.",
-      sentMessage: { id: newMessageRef.id, ...messageData }
+      sentMessage: { id: newMessageRef.id, ...messageData },
     });
   } catch (error) {
     console.error("Mesaj gönderme hatası:", error);
-    return res.status(500).json({ error: "Mesaj gönderilirken bir hata oluştu." });
+    return res
+      .status(500)
+      .json({ error: "Mesaj gönderilirken bir hata oluştu." });
   }
 };
 
@@ -174,7 +197,8 @@ exports.sendMessage = async (req, res) => {
 exports.uploadFile = async (req, res) => {
   try {
     const { uid } = req.user;
-    if (!req.file) return res.status(400).json({ error: "Dosya bulunamadı." });
+    if (!req.file)
+      return res.status(400).json({ error: "Dosya bulunamadı." });
 
     const bucket = getStorage().bucket();
     const filename = `chat_files/${uid}/${Date.now()}_${req.file.originalname}`;
@@ -196,6 +220,8 @@ exports.uploadFile = async (req, res) => {
     });
   } catch (error) {
     console.error("Dosya yükleme hatası:", error);
-    return res.status(500).json({ error: "Dosya yüklenirken bir hata oluştu." });
+    return res
+      .status(500)
+      .json({ error: "Dosya yüklenirken bir hata oluştu." });
   }
 };
