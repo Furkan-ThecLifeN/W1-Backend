@@ -21,6 +21,7 @@
   },
   "homepage": "https://github.com/Furkan-ThecLifeN/W1-Backend#readme",
   "dependencies": {
+    "connect-busboy": "^1.0.0",
     "cors": "^2.8.5",
     "dotenv": "^17.2.1",
     "express": "^5.1.0",

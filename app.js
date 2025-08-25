@@ -1,64 +1,66 @@
-  // app.js (ana dosya)
+// app.js (ana dosya)
 
-  require('dotenv').config();
-  const express = require('express');
-  const helmet = require('helmet');
-  const cors = require('cors');
-  const rateLimit = require('express-rate-limit');
-  const requestIp = require('request-ip');
-  const useragent = require('express-useragent');
+require('dotenv').config();
+const express = require('express');
+const helmet = require('helmet');
+const cors = require('cors');
+const rateLimit = require('express-rate-limit');
+const requestIp = require('request-ip');
+const useragent = require('express-useragent');
+const busboy = require('connect-busboy'); // ✅ Yeni busboy importu
 
-  const authRoutes = require('./routes/authRoutes');
-  const userRoutes = require('./routes/userRoutes');
-  const messageRoutes = require('./routes/messageRoutes'); // ✅ Yeni router
-  const { startDeletionJob } = require('./cronJob'); // ✅ Cron job import
+const authRoutes = require('./routes/authRoutes');
+const userRoutes = require('./routes/userRoutes');
+const messageRoutes = require('./routes/messageRoutes');
+const { startDeletionJob } = require('./cronJob');
 
-  const app = express();
+const app = express();
 
-  // İzin verilen originler
-  const allowedOrigins = [
-    'http://localhost:3000',
-    'https://w1-fawn.vercel.app'
-  ];
+// İzin verilen originler
+const allowedOrigins = [
+  'http://localhost:3000',
+  'https://w1-fawn.vercel.app'
+];
 
-  app.use(helmet());
-  app.use(express.json());
-  app.use(requestIp.mw());
-  app.use(useragent.express());
+app.use(helmet());
+app.use(express.json());
+app.use(requestIp.mw());
+app.use(useragent.express());
+app.use(busboy({ immediate: false })); // ✅ Busboy middleware'i eklendi, 'immediate: false' önemlidir
 
-  app.use(cors({
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
-      } else {
-        callback(new Error(`CORS policy: ${origin} erişime izin verilmedi`), false);
-      }
-    },
-    credentials: true
-  }));
+app.use(cors({
+  origin: function (origin, callback) {
+    if (!origin) return callback(null, true);
+    if (allowedOrigins.includes(origin)) {
+      return callback(null, true);
+    } else {
+      callback(new Error(`CORS policy: ${origin} erişime izin verilmedi`), false);
+    }
+  },
+  credentials: true
+}));
 
-  // Rate limiter
-  const limiter = rateLimit({
-    windowMs: 15 * 60 * 1000,
-    max: 100,
-    message: 'Too many requests. Please try again after 15 minutes.'
-  });
-  app.use(limiter);
+// Rate limiter
+const limiter = rateLimit({
+  windowMs: 15 * 60 * 1000,
+  max: 100,
+  message: 'Too many requests. Please try again after 15 minutes.'
+});
+app.use(limiter);
 
-  // ✅ Route tanımlamaları
-  app.use('/api/auth', authRoutes);
-  app.use('/api/users', userRoutes);
-  app.use('/api/messages', messageRoutes); // ✅ Yeni mesajlaşma route
+// ✅ Route tanımlamaları
+app.use('/api/auth', authRoutes);
+app.use('/api/users', userRoutes);
+app.use('/api/messages', messageRoutes); // ✅ Düzeltilmiş messageRoutes kullanılıyor
 
-  // Basit test endpoint
-  app.get('/', (req, res) => {
-    res.send('API çalışıyor!');
-  });
+// Basit test endpoint
+app.get('/', (req, res) => {
+  res.send('API çalışıyor!');
+});
 
-  // Sunucu başlatma
-  const PORT = process.env.PORT || 3001;
-  app.listen(PORT, () => {
-    console.log(`Server ${PORT} portunda çalışıyor`);
-    startDeletionJob(); // ✅ Sunucu başladığında cron job'u başlat
-  });
+// Sunucu başlatma
+const PORT = process.env.PORT || 3001;
+app.listen(PORT, () => {
+  console.log(`Server ${PORT} portunda çalışıyor`);
+  startDeletionJob(); // ✅ Sunucu başladığında cron job'u başlat
+});

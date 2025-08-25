@@ -9,16 +9,17 @@ if (!admin.apps.length) {
   try {
     const serviceAccount = require(keyPath);
     admin.initializeApp({
-      credential: admin.credential.cert(serviceAccount)
+      credential: admin.credential.cert(serviceAccount),
+      storageBucket: "your-bucket-name.appspot.com"
     });
   } catch (error) {
-    console.error("Firebase Admin SDK başlatılırken hata oluştu. Lütfen servis hesabı dosyasını kontrol edin.", error);
+    console.error("Firebase Admin SDK başlatılırken hata oluştu.", error);
     process.exit(1); 
   }
 }
 
 const auth = admin.auth();
 const db = admin.firestore();
+const bucket = admin.storage().bucket();
 
-// Not: Storage'ı devre dışı bıraktık
-module.exports = { auth, db };
+module.exports = { auth, db, bucket };
