@@ -138,24 +138,25 @@ exports.getMessages = async (req, res) => {
   }
 };
 
-// 3. Metin / Dosya / Ses Mesajı Gönderme
+// 3. Metin / Dosya / Ses Mesajı Gönderme (ve Kalpli Mesaj!)
 exports.sendMessage = async (req, res) => {
   try {
     const { uid } = req.user;
-    const { receiverUid, text, file, audio } = req.body; // ✅ receiverUid sabit
+    const { receiverUid, text, type, file, audio } = req.body; // ✅ type alanı da alındı
 
-    // ✅ Temel hata kontrolü
+    // ✅ Temel kontroller
     if (!uid) {
       return res.status(401).json({ error: "Kimlik doğrulaması gerekli." });
     }
     if (!receiverUid) {
       return res.status(400).json({ error: "Alıcı bilgisi zorunludur." });
     }
-    if (!text && !file && !audio) {
+    // 🔎 Sadece kalpli mesajlarda text boş olabilir
+    if (!text && !file && !audio && type !== "heart") {
       return res.status(400).json({ error: "Mesaj içeriği boş olamaz." });
     }
 
-    // ✅ Konuşma id'si üret
+    // ✅ Konuşma ID’si
     const conversationId = getConversationId(uid, receiverUid);
     const messagesCollection = db
       .collection("conversations")
@@ -164,7 +165,7 @@ exports.sendMessage = async (req, res) => {
 
     const batch = db.batch();
 
-    // ✅ Yeni mesaj (type alanı eklendi)
+    // ✅ Yeni mesaj
     const newMessageRef = messagesCollection.doc();
     const messageData = {
       senderId: uid,
@@ -172,28 +173,42 @@ exports.sendMessage = async (req, res) => {
       text: text || null,
       file: file || null,
       audio: audio || null,
-      type: text ? "text" : file ? "file" : audio ? "audio" : "unknown", // 🔥 type alanı eklendi
+      type: type || (text ? "text" : file ? "file" : audio ? "audio" : "unknown"), // 🔥 type öncelikli
       createdAt: FieldValue.serverTimestamp(),
       status: "sent",
     };
     batch.set(newMessageRef, messageData);
 
-    // ✅ Konuşma güncellemesi
+    // ✅ Konuşma bilgisi
     const conversationDocRef = db.collection("conversations").doc(conversationId);
+
+    let lastMessageText;
+    if (type === "heart") {
+      lastMessageText = text ? `❤️ ${text}` : "❤️ Kalpli Mesaj";
+    } else if (type === "file") {
+      lastMessageText = "📎 Dosya";
+    } else if (type === "audio") {
+      lastMessageText = "🎤 Sesli Mesaj";
+    } else {
+      lastMessageText = text;
+    }
+
     const lastMessage = {
-      text: text || (file ? "📎 Dosya" : audio ? "🎤 Sesli Mesaj" : "..."),
+      text: lastMessageText,
       senderId: uid,
       updatedAt: FieldValue.serverTimestamp(),
     };
+
     const conversationData = {
       members: [uid, receiverUid],
       lastMessage,
       updatedAt: FieldValue.serverTimestamp(),
       conversationId,
     };
+
     batch.set(conversationDocRef, conversationData, { merge: true });
 
-    // ✅ İşlemi kaydet
+    // ✅ Kaydet
     await batch.commit();
 
     return res.status(201).json({
@@ -202,7 +217,9 @@ exports.sendMessage = async (req, res) => {
     });
   } catch (error) {
     console.error("Mesaj gönderme hatası:", error);
-    return res.status(500).json({ error: "Mesaj gönderilirken bir hata oluştu." });
+    return res
+      .status(500)
+      .json({ error: "Mesaj gönderilirken bir hata oluştu." });
   }
 };
 
@@ -321,29 +338,44 @@ exports.uploadFileAndSendMessage = async (req, res) => {
 
 // 6. Kalpli Mesaj Gönderme
 exports.sendHeartMessage = async (req, res) => {
-  try {
-    const { uid } = req.user;
-    const { receiverUid } = req.body;
+  try {
+    const { uid } = req.user;
+    const { receiverUid, text } = req.body; // ✅ 'text' de alınır
 
-    const conversationId = getConversationId(uid, receiverUid);
-    const conversationDocRef = db.collection("conversations").doc(conversationId);
-    const newMessageRef = conversationDocRef.collection("messages").doc();
+    const conversationId = getConversationId(uid, receiverUid);
+    const conversationDocRef = db.collection("conversations").doc(conversationId);
+    const newMessageRef = conversationDocRef.collection("messages").doc();
 
-    const messageData = {
-      senderId: uid,
-      type: "heart",
-      createdAt: FieldValue.serverTimestamp(),
-    };
+    // 📩 Mesaj verisi
+    const messageData = {
+      senderId: uid,
+      type: "heart",
+      text: text || "❤️", // ✅ Frontend'den gelen text varsa ekle
+      createdAt: FieldValue.serverTimestamp(),
+    };
 
-    await newMessageRef.set(messageData);
-    await conversationDocRef.set(
-      { updatedAt: FieldValue.serverTimestamp() },
-      { merge: true }
-    );
+    // 💬 Konuşma meta verisi
+    const conversationData = {
+      members: [uid, receiverUid],
+      lastMessage: {
+        text: text ? `❤️ ${text}` : "❤️ Kalpli Mesaj", // ✅ son mesaj özet
+        senderId: uid,
+        updatedAt: FieldValue.serverTimestamp(),
+      },
+      updatedAt: FieldValue.serverTimestamp(),
+      conversationId: conversationId,
+    };
 
-    res.status(201).json({ message: "❤️ Kalpli mesaj gönderildi." });
-  } catch (error) {
-    console.error("Kalpli mesaj gönderme hatası:", error);
-    res.status(500).json({ error: "İşlem sırasında bir hata oluştu." });
-  }
+    // 🔄 Batch ile güvenli yazma
+    const batch = db.batch();
+    batch.set(newMessageRef, messageData);
+    batch.set(conversationDocRef, conversationData, { merge: true });
+
+    await batch.commit();
+
+    res.status(201).json({ message: "❤️ Kalpli mesaj gönderildi." });
+  } catch (error) {
+    console.error("Kalpli mesaj gönderme hatası:", error);
+    res.status(500).json({ error: "İşlem sırasında bir hata oluştu." });
+  }
 };
