@@ -7,7 +7,9 @@ const cors = require('cors');
 const rateLimit = require('express-rate-limit');
 const requestIp = require('request-ip');
 const useragent = require('express-useragent');
-const busboy = require('connect-busboy'); // ✅ Yeni busboy importu
+const path = require('path'); // ✅ path modülü eklendi
+const fs = require('fs'); // ✅ fs modülü eklendi
+const multer = require('multer'); // ✅ Multer import edildi
 
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
@@ -15,6 +17,15 @@ const messageRoutes = require('./routes/messageRoutes');
 const { startDeletionJob } = require('./cronJob');
 
 const app = express();
+
+// ✅ 'uploads' klasörünü oluştur (yoksa oluştur)
+const uploadsDir = path.join(__dirname, 'uploads');
+if (!fs.existsSync(uploadsDir)) {
+  fs.mkdirSync(uploadsDir);
+}
+
+// ✅ Dosyaları statik olarak sun
+app.use('/uploads', express.static(uploadsDir));
 
 // İzin verilen originler
 const allowedOrigins = [
@@ -26,7 +37,6 @@ app.use(helmet());
 app.use(express.json());
 app.use(requestIp.mw());
 app.use(useragent.express());
-app.use(busboy({ immediate: false })); // ✅ Busboy middleware'i eklendi, 'immediate: false' önemlidir
 
 app.use(cors({
   origin: function (origin, callback) {
@@ -40,7 +50,7 @@ app.use(cors({
   credentials: true
 }));
 
-// Rate limiter
+// ✅ Rate limiter
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -51,7 +61,7 @@ app.use(limiter);
 // ✅ Route tanımlamaları
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
-app.use('/api/messages', messageRoutes); // ✅ Düzeltilmiş messageRoutes kullanılıyor
+app.use('/api/messages', messageRoutes);
 
 // Basit test endpoint
 app.get('/', (req, res) => {

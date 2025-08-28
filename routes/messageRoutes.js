@@ -3,16 +3,40 @@
 const express = require("express");
 const router = express.Router();
 const verifyToken = require("../middlewares/verifyToken");
-// const upload = require("../middlewares/multerConfig"); // Busboy kullanıldığı için artık buna gerek yok
 const messageController = require("../controllers/messageController");
+const multer = require("multer");
+const path = require("path");
 
-// Mesajlaşma Endpoints
+// Multer'ı, dosyaları 'uploads' klasörüne kaydetmek için yapılandırır.
+const storage = multer.diskStorage({
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
+});
+const upload = multer({ storage: storage });
+
+// Mesajlaşma ile ilgili tüm API rotaları
 router.get("/conversations", verifyToken, messageController.getConversations);
-// Düzeltme: /messages yerine doğrudan /:conversationId kullanıyoruz
 router.get("/:conversationId", verifyToken, messageController.getMessages);
 router.post("/message", verifyToken, messageController.sendMessage);
-// Düzeltme: upload.single("file") kaldırıldı, busboy controller'da işleniyor
-router.post("/file", verifyToken, messageController.uploadFileAndSendMessage);
+
+// Bu rota, hem fotoğrafları hem de diğer dosyaları yüklemek için kullanılır.
+router.post(
+  "/file", 
+  verifyToken, 
+  upload.single("file"), 
+  messageController.uploadFileAndSendMessage
+);
+
+// Kalpli mesajlar için özel rota
 router.post("/heart", verifyToken, messageController.sendHeartMessage);
+
+// ✅ DÜZELTME: Multer middleware'i bu rotadan kaldırıldı.
+// Dosya indirme (GET) rotası, dosya adını dinamik olarak URL'den alır.
+router.get("/file/:fileName", messageController.serveAndDestroyFile);
 
 module.exports = router;
