@@ -9,13 +9,13 @@ const path = require("path");
 
 // Multer'ı, dosyaları 'uploads' klasörüne kaydetmek için yapılandırır.
 const storage = multer.diskStorage({
-  destination: (req, file, cb) => {
-    cb(null, 'uploads/');
-  },
-  filename: (req, file, cb) => {
-    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
-    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
-  }
+  destination: (req, file, cb) => {
+    cb(null, 'uploads/');
+  },
+  filename: (req, file, cb) => {
+    const uniqueSuffix = Date.now() + '-' + Math.round(Math.random() * 1E9);
+    cb(null, file.fieldname + '-' + uniqueSuffix + path.extname(file.originalname));
+  }
 });
 const upload = multer({ storage: storage });
 
@@ -34,9 +34,5 @@ router.post(
 
 // Kalpli mesajlar için özel rota
 router.post("/heart", verifyToken, messageController.sendHeartMessage);
-
-// ✅ DÜZELTME: Multer middleware'i bu rotadan kaldırıldı.
-// Dosya indirme (GET) rotası, dosya adını dinamik olarak URL'den alır.
-router.get("/file/:fileName", messageController.serveAndDestroyFile);
 
 module.exports = router;

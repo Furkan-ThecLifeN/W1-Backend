@@ -7,6 +7,8 @@ const fs = require("fs");
 const mime = require("mime-types");
 const axios = require("axios");
 const FormData = require("form-data");
+// ✅ YENİ: https modülünü import ediyoruz
+const https = require("https");
 
 // Konuşma Kimliği Oluşturma Fonksiyonu
 const getConversationId = (user1Id, user2Id) => {
@@ -29,6 +31,51 @@ const uploadToImgbb = async (filePath) => {
     return response.data.data.url;
   } catch (error) {
     console.error("Imgbb'ye yükleme hatası:", error);
+    return null;
+  }
+};
+
+// Anonfiles yerine Gofile'ı kullanacak şekilde API adresini ve mantığı güncelliyoruz.
+const UPLOAD_SERVICE_URL = "https://store1.gofile.io/uploadFile";
+
+const httpsAgent = new https.Agent({
+  // Anonfiles sunucusunun sertifika sorununu geçici olarak çözmek için
+  // bu satırı ekliyoruz. Üretim ortamında bu önerilmez.
+  rejectUnauthorized: false,
+});
+
+// ✅ GÜNCELLENDİ: Dosyayı Anonfiles'a Yükleme (anonymfile.com)
+const uploadToAnonfiles = async (filePath) => {
+  try {
+    const formData = new FormData();
+    formData.append("file", fs.createReadStream(filePath));
+
+    const response = await axios.post(
+      "https://api.anonfiles.com/upload",
+      formData,
+      {
+        headers: {
+          ...formData.getHeaders(),
+        },
+        // ✅ ÇÖZÜM: Self-signed certificate hatasını önlemek için
+        httpsAgent: new https.Agent({
+          rejectUnauthorized: false
+        }),
+      }
+    );
+
+    const responseData = response.data;
+
+    // Anonfiles'ın yanıt formatını kontrol et
+    if (responseData.status && responseData.data && responseData.data.file) {
+      return responseData.data.file.url.full;
+    }
+
+    console.error("Anonfiles'a yükleme hatası veya geçersiz yanıt:", responseData);
+    return null;
+
+  } catch (error) {
+    console.error("Anonfiles'a yükleme hatası:", error.response ? error.response.data : error.message);
     return null;
   }
 };
@@ -199,61 +246,76 @@ exports.sendMessage = async (req, res) => {
   }
 };
 
-// 4. ✅ Güncellendi: Tekil Dosya Yükleme ve Mesaj Gönderme
+// ✅ GÜNCELLENDİ: Dosya Yükleme ve Mesaj Gönderme
 exports.uploadFileAndSendMessage = async (req, res) => {
-  const { uid } = req.user;
-  const { receiverUid } = req.body;
+  const { conversationId, fromId, toId, messageType, fileName } = req.body;
   const file = req.file;
 
   if (!file) {
-    return res.status(400).json({ error: "Dosya yüklenmedi." });
+    return res.status(400).json({ error: "No file provided" });
   }
 
-  try {
-    const mimeType = file.mimetype;
-    let fileUrl = "";
-    let messageType = "";
+  const filePath = path.join(__dirname, "../", file.path);
+  let fileUrl = null;
+  let fileId = null;
+  let errorOccurred = false;
 
-    // Dosya türüne göre farklı işlem
-    if (mimeType.startsWith("image/")) {
-      // Fotoğrafsa, Imgbb'ye yükle
-      fileUrl = await uploadToImgbb(file.path);
-      messageType = "image";
-      // Yerel dosyayı hemen sil
-      fs.unlinkSync(file.path);
+  try {
+    const isImage = file.mimetype.startsWith("image/");
+    if (isImage) {
+      fileUrl = await uploadToImgbb(filePath);
       if (!fileUrl) {
-        return res
-          .status(500)
-          .json({ error: "Fotoğraf yüklenirken bir hata oluştu." });
+        errorOccurred = true;
       }
     } else {
-      // Diğer dosya türleriyse (ses, video, vb.), mevcut yerel yapıyı kullan
-      const fileName = file.filename;
-      fileUrl = `/api/messages/file/${fileName}`;
-      messageType = mimeType.startsWith("audio/") ? "audio" : "file";
+      const form = new FormData();
+      form.append("file", fs.createReadStream(filePath), file.originalname);
+      const uploadResponse = await axios.post(UPLOAD_SERVICE_URL, form, {
+        headers: { ...form.getHeaders() },
+        httpsAgent,
+      });
+
+      if (uploadResponse.data.status === "ok") {
+        fileUrl = uploadResponse.data.data.downloadPage;
+        fileId = uploadResponse.data.data.fileId;
+      } else {
+        console.error("Gofile'a yükleme hatası veya geçersiz yanıt:", uploadResponse.data);
+        errorOccurred = true;
+      }
     }
 
-    const conversationId = getConversationId(uid, receiverUid);
+    if (errorOccurred || !fileUrl) {
+      fs.unlinkSync(filePath);
+      return res.status(500).json({ error: "Dosya yükleme servisi bir URL döndürmedi." });
+    }
+
+    console.log(`Dosya başarıyla yüklendi: ${fileUrl}`);
+
     const conversationDocRef = db.collection("conversations").doc(conversationId);
     const newMessageRef = conversationDocRef.collection("messages").doc();
-
+    
     const messageData = {
-      senderId: uid,
-      type: messageType,
-      fileName: file.originalname,
+      senderId: fromId,
+      receiverId: toId,
+      text: messageType,
+      type: isImage ? "image" : "file",
       url: fileUrl,
+      fileName: fileName,
       createdAt: FieldValue.serverTimestamp(),
     };
 
+    if (fileId) {
+      messageData.fileId = fileId;
+    }
+
     const conversationData = {
-      members: [uid, receiverUid],
+      members: [fromId, toId],
       lastMessage: {
-        text: messageType === "image" ? "Fotoğraf gönderdi." : "Dosya gönderdi.",
-        senderId: uid,
+        text: isImage ? `Resim: ${fileName}` : `Dosya: ${fileName}`,
+        senderId: fromId,
         updatedAt: FieldValue.serverTimestamp(),
       },
       updatedAt: FieldValue.serverTimestamp(),
-      conversationId,
     };
 
     const batch = db.batch();
@@ -261,12 +323,17 @@ exports.uploadFileAndSendMessage = async (req, res) => {
     batch.set(conversationDocRef, conversationData, { merge: true });
     await batch.commit();
 
-    res.status(200).json({ message: "Dosya başarıyla gönderildi." });
+    fs.unlinkSync(filePath);
+    res.status(200).json({ message: "File uploaded and message sent!" });
   } catch (error) {
-    console.error("Dosya yükleme ve mesaj gönderme hatası:", error);
-    res.status(500).json({ error: "Dosya gönderilirken bir hata oluştu." });
+    console.error("Dosya yükleme hatası:", error);
+    if (file) {
+      fs.unlinkSync(file.path);
+    }
+    res.status(500).json({ error: "Dosya yükleme sırasında bir hata oluştu." });
   }
 };
+
 
 // 5. Tek Kullanımlık Dosya Sunma ve Silme
 exports.serveAndDestroyFile = async (req, res) => {
