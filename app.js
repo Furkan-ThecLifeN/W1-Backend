@@ -14,6 +14,7 @@ const multer = require('multer'); // ✅ Multer import edildi
 const authRoutes = require('./routes/authRoutes');
 const userRoutes = require('./routes/userRoutes');
 const messageRoutes = require('./routes/messageRoutes');
+const feedsRoutes = require('./routes/feedsRoutes'); // ✅ Yeni route eklendi
 const { startDeletionJob } = require('./cronJob');
 
 const app = express();
@@ -62,6 +63,9 @@ app.use(limiter);
 app.use('/api/auth', authRoutes);
 app.use('/api/users', userRoutes);
 app.use('/api/messages', messageRoutes);
+app.use('/api/feeds', feedsRoutes);
+app.use(express.static('public'));
+
 
 // Basit test endpoint
 app.get('/', (req, res) => {

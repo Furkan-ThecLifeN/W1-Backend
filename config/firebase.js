@@ -1,5 +1,6 @@
 const admin = require('firebase-admin');
 const path = require('path');
+const FieldValue = admin.firestore.FieldValue;
 
 const keyPath = process.env.NODE_ENV === 'production'
   ? '/etc/secrets/serviceAccountKey.json' 
@@ -22,4 +23,4 @@ const auth = admin.auth();
 const db = admin.firestore();
 const bucket = admin.storage().bucket();
 
-module.exports = { auth, db, bucket };
+module.exports = { auth, db, bucket, FieldValue };
