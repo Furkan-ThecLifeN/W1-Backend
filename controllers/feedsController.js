@@ -1,19 +1,3 @@
-// controllers/feedsController.js
-
-const { db, FieldValue } = require('../config/firebase');
-
-// YouTube Shorts URL'sinden video ID'sini ve embed URL'sini çıkarmak için yardımcı fonksiyon
-const getYouTubeEmbedUrl = (url) => {
-  const shortsRegex = /(?:youtube\.com\/(?:shorts\/|live\/)|youtu\.be\/|youtube-nocookie\.com\/embed\/)([\w-]{11})/;
-  const match = url.match(shortsRegex);
-  if (match && match[1]) {
-    const videoId = match[1];
-    // Otomatik oynatma, döngü ve dikey video için gerekli parametreler
-    return `https://www.youtube.com/embed/${videoId}?vq=hd1080&modestbranding=1&controls=0&rel=0&showinfo=0&autoplay=1&loop=1&playlist=${videoId}`;
-  }
-  return null;
-};
-
 exports.createFeed = async (req, res) => {
   const { content, mediaUrl, ownershipAccepted } = req.body;
   const userId = req.user.uid;
@@ -28,7 +12,17 @@ exports.createFeed = async (req, res) => {
   }
 
   try {
-    const newPostRef = db.collection('users').doc(userId).collection('posts').doc();
+    // Kullanıcı bilgilerini çek
+    const userRef = db.collection('users').doc(userId);
+    const userSnap = await userRef.get();
+
+    if (!userSnap.exists) {
+      return res.status(404).json({ error: 'Kullanıcı bulunamadı.' });
+    }
+
+    const userData = userSnap.data();
+
+    const newPostRef = userRef.collection('posts').doc();
     const newGlobalFeedRef = db.collection('globalFeeds').doc(newPostRef.id);
 
     const postData = {
@@ -36,6 +30,8 @@ exports.createFeed = async (req, res) => {
       content: content || '',
       mediaUrl: embedUrl,
       ownerId: userId,
+      username: userData.username || 'Anonim Kullanıcı',
+      userProfileImage: userData.photoURL || 'https://i.pravatar.cc/48',
       createdAt: FieldValue.serverTimestamp(),
       ownershipAccepted: ownershipAccepted
     };
@@ -48,7 +44,6 @@ exports.createFeed = async (req, res) => {
     await batch.commit();
 
     // Kullanıcının post sayısını güncelle
-    const userRef = db.collection('users').doc(userId);
     await userRef.update({
       'stats.posts': FieldValue.increment(1)
     });
