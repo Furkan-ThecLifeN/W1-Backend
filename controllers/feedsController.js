@@ -1,3 +1,7 @@
+// controllers/feedsController.js
+const { db, FieldValue } = require('../config/firebase');
+const { getYouTubeEmbedUrl } = require('../utils/mediaHelpers'); // ✅ Doğru import satırı
+
 exports.createFeed = async (req, res) => {
   const { content, mediaUrl, ownershipAccepted } = req.body;
   const userId = req.user.uid;
@@ -12,7 +16,6 @@ exports.createFeed = async (req, res) => {
   }
 
   try {
-    // Kullanıcı bilgilerini çek
     const userRef = db.collection('users').doc(userId);
     const userSnap = await userRef.get();
 
@@ -22,7 +25,8 @@ exports.createFeed = async (req, res) => {
 
     const userData = userSnap.data();
 
-    const newPostRef = userRef.collection('posts').doc();
+    // Yeni post için benzersiz bir ID oluştur ve bu ID'yi her iki koleksiyon için de kullan.
+    const newPostRef = userRef.collection('feeds').doc(); // 'posts' yerine 'feeds' olarak güncelledim
     const newGlobalFeedRef = db.collection('globalFeeds').doc(newPostRef.id);
 
     const postData = {
@@ -33,14 +37,16 @@ exports.createFeed = async (req, res) => {
       username: userData.username || 'Anonim Kullanıcı',
       userProfileImage: userData.photoURL || 'https://i.pravatar.cc/48',
       createdAt: FieldValue.serverTimestamp(),
-      ownershipAccepted: ownershipAccepted
+      ownershipAccepted: ownershipAccepted,
+      likes: 0, 
     };
 
-    // İki koleksiyona birden kayıt (Batch write)
+    // Firestore'da toplu yazma işlemi başlat
     const batch = db.batch();
     batch.set(newPostRef, postData);
     batch.set(newGlobalFeedRef, postData);
 
+    // İşlemi tamamla
     await batch.commit();
 
     // Kullanıcının post sayısını güncelle
