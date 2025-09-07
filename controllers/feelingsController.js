@@ -3,12 +3,10 @@ const { db, FieldValue } = require("../config/firebase");
 
 // ✅ Gönderi paylaşma işlevi
 exports.sharePost = async (req, res) => {
-  // Hata ayıklama için token ve kullanıcı bilgilerini logla
   console.log("İstek kullanıcısı:", req.user);
 
   const { postText, images, privacy } = req.body;
 
-  // Yetkilendirme kontrolü
   if (!req.user || !req.user.uid) {
     console.error("Yetkilendirme hatası: Kullanıcı bilgileri eksik.");
     return res
@@ -50,26 +48,28 @@ exports.sharePost = async (req, res) => {
   };
 
   try {
-    let docRef;
+    // ✅ 1. Gönderiyi her zaman kullanıcının kişisel koleksiyonuna kaydet
+    const userFeelingsRef = db
+      .collection("users")
+      .doc(uid)
+      .collection("feelings");
+    const userDocRef = await userFeelingsRef.add(newFeeling);
+    console.log(`Kullanıcıya özel gönderi kaydedildi: ${userDocRef.id}`);
+
+    let globalDocId = null;
+
+    // ✅ 2. Eğer gizlilik "public" ise, global koleksiyona da kaydet
     if (privacy === "public") {
-      docRef = await db.collection("globalFeelings").add(newFeeling);
-      console.log(`Herkese açık gönderi kaydedildi: ${docRef.id}`);
-      return res.status(201).json({
-        message: "Gönderi başarıyla herkese açık olarak paylaşıldı.",
-        feelingId: docRef.id,
-      });
-    } else {
-      const userFeelingsRef = db
-        .collection("users")
-        .doc(uid)
-        .collection("feelings");
-      docRef = await userFeelingsRef.add(newFeeling);
-      console.log(`Kullanıcıya özel gönderi kaydedildi: ${docRef.id}`);
-      return res.status(201).json({
-        message: "Gönderi başarıyla özel olarak paylaşıldı.",
-        feelingId: docRef.id,
-      });
+      const globalDocRef = await db.collection("globalFeelings").add(newFeeling);
+      globalDocId = globalDocRef.id;
+      console.log(`Herkese açık gönderi de kaydedildi: ${globalDocId}`);
     }
+
+    return res.status(201).json({
+      message: "Gönderi başarıyla paylaşıldı.",
+      feelingId: userDocRef.id,
+      globalFeelingId: globalDocId,
+    });
   } catch (error) {
     console.error("Gönderi paylaşım hatası:", error);
     return res.status(500).json({
