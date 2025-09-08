@@ -14,23 +14,40 @@ exports.sharePost = async (req, res) => {
       .json({ error: "Yetkilendirme hatası: Kullanıcı bilgileri eksik." });
   }
 
-  // Kullanıcı bilgilerini güvenli şekilde al
   const uid = req.user.uid;
-  const displayName = req.user.name || req.user.displayName || req.user.email;
-  const username = req.user.username || (req.user.email ? req.user.email.split("@")[0] : "Kullanıcı");
-  const photoURL =
+
+  // 🔹 Varsayılan bilgileri hazırla (JWT'den gelenler)
+  let username =
+    req.user.username ||
+    (req.user.email ? req.user.email.split("@")[0] : "Kullanıcı");
+  let displayName =
+    req.user.name || req.user.displayName || req.user.email || "Kullanıcı";
+  let photoURL =
     req.user.picture ||
     req.user.photoURL ||
     "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png";
 
+  try {
+    // 🔹 Firestore'dan kullanıcı profili çek (daha güvenilir)
+    const userDoc = await db.collection("users").doc(uid).get();
+    if (userDoc.exists) {
+      const userData = userDoc.data();
+      username = userData.username || username;
+      displayName = userData.displayName || displayName;
+      photoURL = userData.photoURL || photoURL;
+    }
+  } catch (err) {
+    console.error("Kullanıcı profili alınamadı, fallback kullanılacak:", err);
+  }
+
   // Gönderi alanlarını kontrol et
-  if (!postText.trim() && (!images || images.length === 0)) {
+  if (!postText?.trim() && (!images || images.length === 0)) {
     return res.status(400).json({
       error: "Gönderi metni veya en az bir görsel gereklidir.",
     });
   }
 
-  // Yeni gönderi nesnesi
+  // ✅ Yeni gönderi nesnesi
   const newFeeling = {
     uid,
     username,
@@ -48,7 +65,7 @@ exports.sharePost = async (req, res) => {
   };
 
   try {
-    // ✅ 1. Gönderiyi her zaman kullanıcının kişisel koleksiyonuna kaydet
+    // ✅ 1. Kullanıcının kendi koleksiyonuna kaydet
     const userFeelingsRef = db
       .collection("users")
       .doc(uid)
@@ -58,7 +75,7 @@ exports.sharePost = async (req, res) => {
 
     let globalDocId = null;
 
-    // ✅ 2. Eğer gizlilik "public" ise, global koleksiyona da kaydet
+    // ✅ 2. Eğer gönderi herkese açık ise global koleksiyona da ekle
     if (privacy === "public") {
       const globalDocRef = await db.collection("globalFeelings").add(newFeeling);
       globalDocId = globalDocRef.id;
