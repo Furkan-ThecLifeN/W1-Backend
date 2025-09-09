@@ -8,11 +8,21 @@ exports.sharePost = async (req, res) => {
   const { caption, privacy } = req.body;
   let imageUrls = [];
 
+  // 🔹 Eğer backend'e URL dizisi gelmişse ekle
+  if (req.body.imageUrls) {
+    if (Array.isArray(req.body.imageUrls)) {
+      imageUrls.push(...req.body.imageUrls);
+    } else if (typeof req.body.imageUrls === "string") {
+      imageUrls.push(req.body.imageUrls);
+    }
+  }
+
+  // 🔹 Eğer dosya yüklenmişse, URL'lerini ekle
   if (req.files && req.files.length > 0) {
-    imageUrls = req.files.map(
-      (file) =>
-        `${req.protocol}://${req.get("host")}/uploads/${file.filename}`
+    const uploadedUrls = req.files.map(
+      (file) => `${req.protocol}://${req.get("host")}/uploads/${file.filename}`
     );
+    imageUrls.push(...uploadedUrls);
   }
 
   if (!req.user || !req.user.uid) {
