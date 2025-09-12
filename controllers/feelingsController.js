@@ -1,97 +1,46 @@
-// feelingsController.js
-const { db, FieldValue } = require("../config/firebase");
+const admin = require('firebase-admin');
+const db = admin.firestore();
 
-// ✅ Gönderi paylaşma işlevi
 exports.sharePost = async (req, res) => {
-  console.log("İstek kullanıcısı:", req.user);
-
-  const { postText, images, privacy } = req.body;
-
-  if (!req.user || !req.user.uid) {
-    console.error("Yetkilendirme hatası: Kullanıcı bilgileri eksik.");
-    return res
-      .status(401)
-      .json({ error: "Yetkilendirme hatası: Kullanıcı bilgileri eksik." });
-  }
-
-  const uid = req.user.uid;
-
-  // 🔹 Varsayılan bilgileri hazırla (JWT'den gelenler)
-  let username =
-    req.user.username ||
-    (req.user.email ? req.user.email.split("@")[0] : "Kullanıcı");
-  let displayName =
-    req.user.name || req.user.displayName || req.user.email || "Kullanıcı";
-  let photoURL =
-    req.user.picture ||
-    req.user.photoURL ||
-    "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png";
-
   try {
-    // 🔹 Firestore'dan kullanıcı profili çek (daha güvenilir)
-    const userDoc = await db.collection("users").doc(uid).get();
-    if (userDoc.exists) {
-      const userData = userDoc.data();
-      username = userData.username || username;
-      displayName = userData.displayName || displayName;
-      photoURL = userData.photoURL || photoURL;
+    // Frontend'den gelen 'postText' değişkenini doğru şekilde yakalıyoruz.
+    const { postText, images, privacy } = req.body;
+    const userId = req.user.uid;
+
+    const userDoc = await db.collection('users').doc(userId).get();
+    if (!userDoc.exists) {
+      return res.status(404).json({ error: "Kullanıcı bulunamadı." });
     }
-  } catch (err) {
-    console.error("Kullanıcı profili alınamadı, fallback kullanılacak:", err);
-  }
+    const userData = userDoc.data();
 
-  // Gönderi alanlarını kontrol et
-  if (!postText?.trim() && (!images || images.length === 0)) {
-    return res.status(400).json({
-      error: "Gönderi metni veya en az bir görsel gereklidir.",
+    // Firestore'a kaydedilecek gönderi yapısını oluştur
+    const newPostData = {
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      displayName: userData.displayName || 'Kullanıcı',
+      images: images || [],
+      photoURL: userData.photoURL || '',
+      privacy: privacy || 'public',
+      stats: {
+        comments: 0,
+        likes: 0,
+        shares: 0,
+      },
+      // Backend'de yakaladığımız 'postText' değişkenini burada kullanıyoruz.
+      text: postText || '',
+      uid: userId,
+      username: userData.username || 'unknown_user', // Kullanıcı verisinden username alanını al
+    };
+
+    // Gönderiyi 'globalFeelings' koleksiyonuna kaydet
+    const newFeelingRef = await db.collection('globalFeelings').add(newPostData);
+
+    res.status(201).json({
+      message: "Gönderi başarıyla paylaşıldı!",
+      postId: newFeelingRef.id,
     });
-  }
 
-  // ✅ Yeni gönderi nesnesi
-  const newFeeling = {
-    uid,
-    username,
-    displayName,
-    photoURL,
-    text: postText,
-    images: images || [],
-    privacy,
-    createdAt: FieldValue.serverTimestamp(),
-    stats: {
-      likes: 0,
-      comments: 0,
-      shares: 0,
-    },
-  };
-
-  try {
-    // ✅ 1. Kullanıcının kendi koleksiyonuna kaydet
-    const userFeelingsRef = db
-      .collection("users")
-      .doc(uid)
-      .collection("feelings");
-    const userDocRef = await userFeelingsRef.add(newFeeling);
-    console.log(`Kullanıcıya özel gönderi kaydedildi: ${userDocRef.id}`);
-
-    let globalDocId = null;
-
-    // ✅ 2. Eğer gönderi herkese açık ise global koleksiyona da ekle
-    if (privacy === "public") {
-      const globalDocRef = await db.collection("globalFeelings").add(newFeeling);
-      globalDocId = globalDocRef.id;
-      console.log(`Herkese açık gönderi de kaydedildi: ${globalDocId}`);
-    }
-
-    return res.status(201).json({
-      message: "Gönderi başarıyla paylaşıldı.",
-      feelingId: userDocRef.id,
-      globalFeelingId: globalDocId,
-    });
   } catch (error) {
-    console.error("Gönderi paylaşım hatası:", error);
-    return res.status(500).json({
-      error: "Sunucu hatası: Gönderi paylaşılamadı.",
-      details: error.message,
-    });
+    console.error("Gönderi paylaşılırken hata oluştu:", error);
+    res.status(500).json({ error: "Sunucu hatası. Lütfen tekrar deneyin." });
   }
 };
