@@ -17,6 +17,7 @@ const messageRoutes = require("./routes/messageRoutes");
 const feedsRoutes = require("./routes/feedsRoutes");
 const feelingsRoutes = require("./routes/feelingsRoutes");
 const postRoutes = require("./routes/postRoutes");
+const actionsBtnRoutes = require("./routes/actionsBtnRoutes");
 const { startDeletionJob } = require("./cronJob");
 
 const app = express();
@@ -70,6 +71,7 @@ app.use("/api/messages", messageRoutes);
 app.use("/api/feeds", feedsRoutes);
 app.use("/api/feelings", feelingsRoutes); 
 app.use("/api/posts", postRoutes);
+app.use("/api/actions", actionsBtnRoutes);
 app.use(express.static("public"));
 
 // Basit test endpoint
