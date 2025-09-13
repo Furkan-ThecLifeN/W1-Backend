@@ -1,78 +1,83 @@
-// backend/controllers/likeController.js
+// /controllers/actionsBtnController.js
 const { db, FieldValue } = require("../config/firebase");
 
-// Gönderiyi beğenme / beğeniyi kaldırma
+// Beğeniyi açma/kapama işlemini yöneten fonksiyon
 exports.toggleLike = async (req, res) => {
+  const { postId, postType } = req.body;
+  const userId = req.user.uid;
+
+  if (!postId || !postType || !userId) {
+    return res.status(400).json({ error: "Eksik parametreler." });
+  }
+
+  const likeDocRef = db.collection("likes").doc(`${postId}_${userId}`);
+  const postRef = db.collection(postType).doc(postId);
+
   try {
-    const { postId, postType } = req.body;
-    const userId = req.user?.uid;
+    const newLikesCount = await db.runTransaction(async (transaction) => {
+      const likeDoc = await transaction.get(likeDocRef);
+      const postDoc = await transaction.get(postRef);
 
-    if (!userId)
-      return res.status(401).json({ error: "Kullanıcı kimliği bulunamadı." });
-    if (!postId || !postType)
-      return res.status(400).json({ error: "Eksik parametre" });
+      if (!postDoc.exists) {
+        throw new Error("Gönderi bulunamadı.");
+      }
 
-    const collectionMap = {
-      feeling: `users/${userId}/feelings`,
-      globalFeeling: "globalFeelings",
-    };
+      const currentLikes = postDoc.data().stats?.likes || 0;
+      let newCount;
 
-    const postCollectionName = collectionMap[postType];
-    if (!postCollectionName)
-      return res.status(400).json({ error: "Geçersiz postType" });
-
-    const postRef = db.collection(postCollectionName).doc(postId);
-    const likeRef = db.collection("users").doc(userId).collection("likes").doc(postId);
-
-    const postDoc = await postRef.get();
-    if (!postDoc.exists) return res.status(404).json({ error: "Gönderi bulunamadı." });
-
-    // Transaction ile güvenli güncelleme
-    await db.runTransaction(async (t) => {
-      const likeDoc = await t.get(likeRef);
-      const currentlyLiked = likeDoc.exists;
-      const newLikesCount = currentlyLiked
-        ? (postDoc.data()?.stats?.likes || 1) - 1
-        : (postDoc.data()?.stats?.likes || 0) + 1;
-
-      // feelings güncelle
-      t.update(postRef, { "stats.likes": newLikesCount });
-
-      if (currentlyLiked) {
-        t.delete(likeRef);
+      if (likeDoc.exists) {
+        // Beğeni zaten mevcut, silme işlemi yap
+        transaction.delete(likeDocRef);
+        transaction.update(postRef, {
+          "stats.likes": FieldValue.increment(-1),
+        });
+        newCount = currentLikes - 1;
+        return newCount;
       } else {
-        t.set(likeRef, {
-          ...postDoc.data(),
+        // Beğeni mevcut değil, ekleme işlemi yap
+        transaction.set(likeDocRef, {
           postId,
+          userId,
           postType,
           createdAt: FieldValue.serverTimestamp(),
-          stats: { ...postDoc.data()?.stats, likes: newLikesCount },
         });
+        transaction.update(postRef, {
+          "stats.likes": FieldValue.increment(1),
+        });
+        newCount = currentLikes + 1;
+        return newCount;
       }
     });
 
-    const updatedPost = await postRef.get();
-    const updatedLikes = updatedPost.data()?.stats?.likes || 0;
-
-    res.status(200).json({ success: true, newLikes: updatedLikes });
-  } catch (err) {
-    console.error("toggleLike hatası:", err);
-    res.status(500).json({ error: "Sunucu hatası" });
+    res.status(200).json({ success: true, newLikesCount });
+  } catch (error) {
+    console.error("Beğeni işlemi sırasında hata:", error);
+    res.status(500).json({
+      error:
+        "Beğeni işlemi başarısız oldu. Lütfen tekrar deneyin. " + error.message,
+    });
   }
 };
 
-// Kullanıcının daha önce beğenip beğenmediğini kontrol etme
+// Beğeni durumunu kontrol eden fonksiyon
 exports.checkLike = async (req, res) => {
-  try {
-    const { postId, postType } = req.body;
-    const userId = req.user?.uid;
-    if (!userId || !postId || !postType) return res.status(400).json({ liked: false });
+  const { postId } = req.body;
+  const userId = req.user.uid;
 
-    const likeRef = db.collection("users").doc(userId).collection("likes").doc(postId);
-    const docSnap = await likeRef.get();
-    res.status(200).json({ liked: docSnap.exists });
-  } catch (err) {
-    console.error("checkLike hatası:", err);
-    res.status(500).json({ liked: false });
+  if (!postId || !userId) {
+    return res.status(400).json({ error: "Eksik parametreler." });
+  }
+
+  try {
+    const likeDocRef = db.collection("likes").doc(`${postId}_${userId}`);
+    const doc = await likeDocRef.get();
+    const liked = doc.exists;
+
+    res.status(200).json({ liked });
+  } catch (error) {
+    console.error("Beğeni durumu kontrol edilirken hata:", error);
+    res.status(500).json({
+      error: "Beğeni durumu kontrol edilirken bir sorun oluştu.",
+    });
   }
 };
