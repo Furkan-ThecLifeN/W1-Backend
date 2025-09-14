@@ -37,8 +37,8 @@ exports.toggleLike = async (req, res) => {
         // Beğeni mevcut değil, ekleme işlemi yap
         transaction.set(likeDocRef, {
           postId,
-          userId,
           postType,
+          userId, // uid yerine userId kullanıldı
           createdAt: FieldValue.serverTimestamp(),
         });
         transaction.update(postRef, {
@@ -80,15 +80,6 @@ exports.checkLike = async (req, res) => {
 };
 
 // ✅ Yorum ekleme fonksiyonu
-const formatDate = (date) => {
-  const d = date instanceof Date ? date : date.toDate?.() || new Date();
-  const day = String(d.getDate()).padStart(2, "0");
-  const month = String(d.getMonth() + 1).padStart(2, "0");
-  const year = d.getFullYear();
-  return `${day}/${month}/${year}`;
-};
-
-// ✅ Yorum ekleme fonksiyonu 2
 exports.addComment = async (req, res) => {
   const { postId, postType, commentText } = req.body;
   const userId = req.user.uid;
@@ -99,7 +90,8 @@ exports.addComment = async (req, res) => {
 
   try {
     const userDoc = await db.collection("users").doc(userId).get();
-    if (!userDoc.exists) return res.status(404).json({ error: "Kullanıcı bulunamadı." });
+    if (!userDoc.exists)
+      return res.status(404).json({ error: "Kullanıcı bulunamadı." });
     const userData = userDoc.data();
 
     const newCommentRef = await db
@@ -130,7 +122,6 @@ exports.addComment = async (req, res) => {
     res.status(500).json({ error: "Yorum ekleme işlemi başarısız." });
   }
 };
-
 
 // ✅ Yorumları getirme fonksiyonu
 exports.getComments = async (req, res) => {
@@ -255,7 +246,11 @@ exports.toggleSave = async (req, res) => {
     return res.status(400).json({ error: "Eksik parametreler." });
   }
 
-  const saveDocRef = db.collection("users").doc(userId).collection("saves").doc(postId);
+  const saveDocRef = db
+    .collection("users")
+    .doc(userId)
+    .collection("saves")
+    .doc(postId);
   const postRef = db.collection(postType).doc(postId);
 
   try {
@@ -291,7 +286,8 @@ exports.toggleSave = async (req, res) => {
     console.error("Kaydetme işlemi hatası:", error);
     res.status(500).json({
       error:
-        "Kaydetme işlemi başarısız oldu. Lütfen tekrar deneyin. " + error.message,
+        "Kaydetme işlemi başarısız oldu. Lütfen tekrar deneyin. " +
+        error.message,
     });
   }
 };
@@ -306,7 +302,11 @@ exports.checkSave = async (req, res) => {
   }
 
   try {
-    const saveDocRef = db.collection("users").doc(userId).collection("saves").doc(postId);
+    const saveDocRef = db
+      .collection("users")
+      .doc(userId)
+      .collection("saves")
+      .doc(postId);
     const doc = await saveDocRef.get();
     const isSaved = doc.exists;
 
@@ -316,48 +316,3 @@ exports.checkSave = async (req, res) => {
     res.status(500).json({ error: "Kaydetme kontrolü sırasında hata oluştu." });
   }
 };
-
-// Diğer fonksiyonlar (toggleLike, addComment, vb.)...
-
-// ✅ Yorum silme fonksiyonu (tek ve doğru sürüm)
-exports.deleteComment = async (req, res) => {
-  const { postId, commentId, postType } = req.body;
-  const userId = req.user.uid;
-
-  if (!postId || !commentId || !postType || !userId) {
-    return res.status(400).json({ error: "Eksik parametreler." });
-  }
-
-  try {
-    const commentRef = db
-      .collection(postType)
-      .doc(postId)
-      .collection("comments")
-      .doc(commentId);
-
-    const commentDoc = await commentRef.get();
-    if (!commentDoc.exists) {
-      return res.status(404).json({ error: "Yorum bulunamadı." });
-    }
-
-    if (commentDoc.data().uid !== userId) {
-      return res.status(403).json({ error: "Bu yorumu silme yetkiniz yok." });
-    }
-
-    await commentRef.delete();
-
-    // Gönderinin yorum sayısını azalt
-    const postRef = db.collection(postType).doc(postId);
-    await postRef.update({
-      "stats.comments": FieldValue.increment(-1),
-    });
-
-    res.status(200).json({ message: "Yorum başarıyla silindi." });
-  } catch (error) {
-    console.error("Yorum silinirken hata oluştu:", error);
-    res.status(500).json({
-      error: "Yorum silme işlemi başarısız. Lütfen tekrar deneyin.",
-    });
-  }
-};
-
