@@ -9,7 +9,7 @@ const {
   deleteComment,
   sharePost,
   toggleSave,
-  checkSave, // ✅ Yeni eklenen fonksiyonu içe aktardık
+  checkSave,
 } = require("../controllers/actionsBtnController");
 const router = express.Router();
 
@@ -26,7 +26,7 @@ router.delete("/comments", protect, deleteComment);
 router.post("/shares", protect, sharePost);
 
 // Kaydetme işlemleri
-router.post("/toggle-save", protect, toggleSave); // ✅ Rota ismi, diğerleriyle tutarlılık için güncellendi
-router.post("/check-save", protect, checkSave); // ✅ Yeni rota eklendi
+router.post("/toggle-save", protect, toggleSave);
+router.post("/check-save", protect, checkSave);
 
 module.exports = router;
