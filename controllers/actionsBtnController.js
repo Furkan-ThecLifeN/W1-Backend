@@ -4,10 +4,10 @@ const { db, FieldValue } = require("../config/firebase");
 // Beğeniyi açma/kapama işlemini yöneten fonksiyon
 exports.toggleLike = async (req, res) => {
   const { postId, postType } = req.body;
-  const userId = req.user.uid;
+  const userId = req.user?.uid;
 
   if (!postId || !postType || !userId) {
-    return res.status(400).json({ error: "Eksik parametreler." });
+    return res.status(401).json({ error: "İşlem için kimlik doğrulama gereklidir." });
   }
 
   const likeDocRef = db.collection("likes").doc(`${postId}_${userId}`);
@@ -26,7 +26,6 @@ exports.toggleLike = async (req, res) => {
       let newCount;
 
       if (likeDoc.exists) {
-        // Beğeni zaten mevcut, silme işlemi yap
         transaction.delete(likeDocRef);
         transaction.update(postRef, {
           "stats.likes": FieldValue.increment(-1),
@@ -34,11 +33,10 @@ exports.toggleLike = async (req, res) => {
         newCount = currentLikes - 1;
         return newCount;
       } else {
-        // Beğeni mevcut değil, ekleme işlemi yap
         transaction.set(likeDocRef, {
           postId,
           postType,
-          userId, // uid yerine userId kullanıldı
+          userId,
           createdAt: FieldValue.serverTimestamp(),
         });
         transaction.update(postRef, {
@@ -53,8 +51,7 @@ exports.toggleLike = async (req, res) => {
   } catch (error) {
     console.error("Beğeni işlemi sırasında hata:", error);
     res.status(500).json({
-      error:
-        "Beğeni işlemi başarısız oldu. Lütfen tekrar deneyin. " + error.message,
+      error: "Beğeni işlemi başarısız oldu. Lütfen tekrar deneyin. " + error.message,
     });
   }
 };
@@ -107,7 +104,6 @@ exports.addComment = async (req, res) => {
         createdAt: FieldValue.serverTimestamp(),
       });
 
-    // Gönderinin yorum sayısını artır
     const postRef = db.collection(postType).doc(postId);
     await postRef.update({
       "stats.comments": FieldValue.increment(1),
@@ -125,7 +121,7 @@ exports.addComment = async (req, res) => {
 
 // ✅ Yorumları getirme fonksiyonu
 exports.getComments = async (req, res) => {
-  const { postId, postType } = req.query; // postType da query'ye eklenmeli
+  const { postId, postType } = req.query;
 
   if (!postId || !postType) {
     return res.status(400).json({ error: "Eksik Gönderi ID'si veya Türü." });
@@ -180,7 +176,6 @@ exports.deleteComment = async (req, res) => {
 
     await commentRef.delete();
 
-    // Gönderinin yorum sayısını azalt
     const postRef = db.collection(postType).doc(postId);
     await postRef.update({
       "stats.comments": FieldValue.increment(-1),
@@ -212,7 +207,6 @@ exports.sharePost = async (req, res) => {
     }
     const postData = postDoc.data();
 
-    // Paylaşım koleksiyonuna yeni belge oluştur
     const shareRef = await db.collection("shares").add({
       originalPostId: postId,
       originalPostType: postType,
@@ -220,7 +214,6 @@ exports.sharePost = async (req, res) => {
       createdAt: FieldValue.serverTimestamp(),
     });
 
-    // Orijinal gönderinin paylaşım sayısını artır
     await postRef.update({
       "stats.shares": FieldValue.increment(1),
     });
@@ -240,17 +233,13 @@ exports.sharePost = async (req, res) => {
 // Kaydetme Fonksiyonu
 exports.toggleSave = async (req, res) => {
   const { postId, postType } = req.body;
-  const userId = req.user.uid;
+  const userId = req.user?.uid;
 
   if (!postId || !postType || !userId) {
-    return res.status(400).json({ error: "Eksik parametreler." });
+    return res.status(401).json({ error: "İşlem için kimlik doğrulama gereklidir." });
   }
 
-  const saveDocRef = db
-    .collection("users")
-    .doc(userId)
-    .collection("saves")
-    .doc(postId);
+  const saveDocRef = db.collection("users").doc(userId).collection("saves").doc(postId);
   const postRef = db.collection(postType).doc(postId);
 
   try {
@@ -261,14 +250,12 @@ exports.toggleSave = async (req, res) => {
       if (!postDoc.exists) throw new Error("Gönderi bulunamadı.");
 
       if (saveDoc.exists) {
-        // Kayıtlıysa, sil
         transaction.delete(saveDocRef);
         transaction.update(postRef, {
           "stats.saves": FieldValue.increment(-1),
         });
         return false;
       } else {
-        // Kayıtlı değilse, ekle
         transaction.set(saveDocRef, {
           postId,
           postType,
@@ -285,9 +272,7 @@ exports.toggleSave = async (req, res) => {
   } catch (error) {
     console.error("Kaydetme işlemi hatası:", error);
     res.status(500).json({
-      error:
-        "Kaydetme işlemi başarısız oldu. Lütfen tekrar deneyin. " +
-        error.message,
+      error: "Kaydetme işlemi başarısız oldu. Lütfen tekrar deneyin. " + error.message,
     });
   }
 };

@@ -1,5 +1,5 @@
 // middlewares/verifyToken.js
-const admin = require('../config/firebase').auth; // Firebase Admin Auth import
+const { auth } = require('../config/firebase'); // Firebase Admin Auth import
 
 module.exports = async (req, res, next) => {
   const authHeader = req.headers.authorization;
@@ -11,7 +11,7 @@ module.exports = async (req, res, next) => {
   const token = authHeader.split(' ')[1];
 
   try {
-    const decodedToken = await admin.verifyIdToken(token);
+    const decodedToken = await auth.verifyIdToken(token);
     req.user = decodedToken;
     next();
   } catch (error) {
