@@ -3,6 +3,10 @@ const { db, FieldValue } = require("../config/firebase");
 
 // Beğeniyi açma/kapama işlemini yöneten fonksiyon
 exports.toggleLike = async (req, res) => {
+  // ✅ Hata Ayıklama: Gelen body verisini ve userId'yi konsola yazdırın
+  console.log('Gelen request body:', req.body);
+  console.log('Token\'dan gelen userId:', req.user?.uid);
+
   const { postId, postType } = req.body;
   const userId = req.user?.uid;
 
@@ -55,7 +59,6 @@ exports.toggleLike = async (req, res) => {
     });
   }
 };
-
 // Beğeni durumunu kontrol eden fonksiyon
 exports.checkLike = async (req, res) => {
   const { postId } = req.body;

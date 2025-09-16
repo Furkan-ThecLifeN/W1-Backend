@@ -7,9 +7,9 @@ const cors = require("cors");
 const rateLimit = require("express-rate-limit");
 const requestIp = require("request-ip");
 const useragent = require("express-useragent");
-const path = require("path"); // ✅ path modülü eklendi
-const fs = require("fs"); // ✅ fs modülü eklendi
-const multer = require("multer"); // ✅ Multer import edildi
+const path = require("path");
+const fs = require("fs");
+const multer = require("multer");
 
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
@@ -17,21 +17,20 @@ const messageRoutes = require("./routes/messageRoutes");
 const feedsRoutes = require("./routes/feedsRoutes");
 const feelingsRoutes = require("./routes/feelingsRoutes");
 const postRoutes = require("./routes/postRoutes");
-const actionsBtnRoutes = require("./routes/actionsBtnRoutes");
+const actionsBtnRoutes = require("./routes/actionsBtnRoutes"); // ✅ Bu, "Feelings" (tweetler) için kullanılan rota
+const postsActionsBtnRoutes = require("./routes/postsActionsBtnRoutes"); // ✅ Bu, "Posts" için yeni rota
+
 const { startDeletionJob } = require("./cronJob");
 
 const app = express();
 
-// ✅ 'uploads' klasörünü oluştur (yoksa oluştur)
 const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
 }
 
-// ✅ Dosyaları statik olarak sun
 app.use("/uploads", express.static(uploadsDir));
 
-// İzin verilen originler
 const allowedOrigins = ["http://localhost:3000", "https://w1-fawn.vercel.app"];
 
 app.use(helmet());
@@ -56,7 +55,6 @@ app.use(
   })
 );
 
-// ✅ Rate limiter
 const limiter = rateLimit({
   windowMs: 15 * 60 * 1000,
   max: 100,
@@ -69,19 +67,18 @@ app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
 app.use("/api/messages", messageRoutes);
 app.use("/api/feeds", feedsRoutes);
-app.use("/api/feelings", feelingsRoutes); 
+app.use("/api/feelings", feelingsRoutes);
 app.use("/api/posts", postRoutes);
-app.use("/api/actions", actionsBtnRoutes);
+app.use("/api/posts", postsActionsBtnRoutes); // Posts işlemleri için
+app.use("/api/actions", actionsBtnRoutes); // Feelings işlemleri için
 app.use(express.static("public"));
 
-// Basit test endpoint
 app.get("/", (req, res) => {
   res.send("API çalışıyor!");
 });
 
-// Sunucu başlatma
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
   console.log(`Server ${PORT} portunda çalışıyor`);
-  startDeletionJob(); // ✅ Sunucu başladığında cron job'u başlat
+  startDeletionJob();
 });
