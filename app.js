@@ -20,6 +20,7 @@ const postRoutes = require("./routes/postRoutes");
 const actionsBtnRoutes = require("./routes/actionsBtnRoutes");
 const postsActionsBtnRoutes = require("./routes/postsActionsBtnRoutes");
 const feedRoutes = require("./routes/feedActionsBtnRoutes");
+const feedActionsBtnRoutes = require('./routes/feedActionsBtnRoutes'); 
 
 const { startDeletionJob } = require("./cronJob");
 
@@ -72,7 +73,9 @@ app.use("/api/feelings", feelingsRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/posts", postsActionsBtnRoutes); // Posts işlemleri için
 app.use("/api/actions", actionsBtnRoutes); // Feelings işlemleri için
-app.use("/api/feeds", feedRoutes);
+app.use("/api/feed-actions", feedRoutes);
+app.use('/api/feeds', feedActionsBtnRoutes);
+
 app.use(express.static("public"));
 
 app.get("/", (req, res) => {

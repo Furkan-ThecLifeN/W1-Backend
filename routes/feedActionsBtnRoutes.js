@@ -1,5 +1,3 @@
-// /routes/feedActionsBtnRoutes.js
-
 const express = require("express");
 const protect = require("../middlewares/verifyToken");
 const {
@@ -15,8 +13,8 @@ const rateLimit = require("express-rate-limit");
 
 // API hız sınırlayıcı
 const apiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
+  windowMs: 15 * 60 * 1000, // 15 dakika
+  max: 100, // 100 istek
   message: "Çok fazla istek gönderdiniz. Lütfen daha sonra tekrar deneyin.",
 });
 
@@ -31,7 +29,7 @@ router.post("/feed-comment-add", protect, apiLimiter, submitFeedComment);
 router.get("/feed-comment-get", protect, apiLimiter, retrieveFeedComments);
 router.delete("/feed-comment-remove", protect, apiLimiter, removeFeedComment);
 
-// Paylaşım işlemi
+// Paylaşım işlemleri
 router.post("/feed-share-post", protect, apiLimiter, recordFeedShare);
 
 module.exports = router;

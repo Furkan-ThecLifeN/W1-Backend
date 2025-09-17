@@ -2,6 +2,7 @@
 
 const admin = require("firebase-admin");
 const { FieldValue } = require("firebase-admin/firestore");
+const { v4: uuidv4 } = require("uuid");
 const db = admin.firestore();
 
 // Beğeni İşlemini Yöneten Fonksiyon
@@ -116,57 +117,64 @@ exports.handleFeedCollection = async (req, res) => {
   }
 };
 
-// Yorum Ekleme İşlemini Yöneten Fonksiyon
+// Yorum Ekleme İşlemini Yöneten Fonksiyon (Admin SDK)
 exports.submitFeedComment = async (req, res) => {
-  const { feedId, commentText } = req.body;
-  const userId = req.user.uid;
-  const userPhotoURL = req.user.photoURL;
-  const displayName = req.user.displayName;
-  const feedType = "globalFeeds";
+  const { feedId, feedType, commentText } = req.body;
+  const { uid, name, email } = req.user;
 
-  if (!feedId || !commentText || !userId) {
-    return res.status(400).json({ error: "Yorum eklemek için eksik bilgi." });
+  if (!feedId || !commentText) {
+    return res.status(400).json({ error: "feedId ve commentText gerekli." });
   }
 
-  const feedRef = db.collection(feedType).doc(feedId);
-  const commentsRef = feedRef.collection("comments");
-
   try {
-    const newCommentRef = await commentsRef.add({
-      uid: userId,
-      displayName,
-      photoURL: userPhotoURL,
-      commentText,
-      createdAt: FieldValue.serverTimestamp(),
-    });
+    const feedCollectionName = feedType || "globalFeeds";
+    const feedRef = db.collection(feedCollectionName).doc(feedId);
+    const commentsRef = feedRef.collection("comments");
 
-    // `postsActionsBtnController.js`'deki gibi "stats.comments" kullanmıyoruz.
-    // Feed koleksiyonunda `comments` adında bir alan yok.
-    // Ancak yoruma ekleme işlemi yapabilirsiniz, bu işlem istatistik güncellemeyi gerektirmez.
-    
+    const newComment = {
+      uid,
+      displayName: name || email.split("@")[0] || "Kullanıcı",
+      text: commentText,
+      createdAt: admin.firestore.FieldValue.serverTimestamp(),
+    };
+
+    const commentDocRef = await commentsRef.add(newComment);
+
+    // Belgeyi tekrar çekip timestamp'i gerçek Date olarak gönderebilirsin
+    const commentSnap = await commentDocRef.get();
+    const commentData = commentSnap.data();
+
     res.status(201).json({
       message: "Yorum başarıyla eklendi.",
-      commentId: newCommentRef.id,
+      comment: { id: commentDocRef.id, ...commentData },
     });
-  } catch (error) {
-    console.error("Yorum eklenirken hata oluştu:", error);
-    res.status(500).json({ error: "Yorum ekleme işlemi başarısız oldu." });
+  } catch (err) {
+    console.error("Yorum ekleme hatası:", err);
+    res.status(500).json({ error: "Yorum eklenemedi (sunucu hatası)." });
   }
 };
 
 // Gönderiye Ait Yorumları Getiren Fonksiyon
 exports.retrieveFeedComments = async (req, res) => {
-  const { feedId } = req.query;
-  const feedType = "globalFeeds";
-
-  if (!feedId) {
-    return res.status(400).json({ error: "Gönderi kimliği eksik." });
-  }
-
-  const commentsRef = db.collection(feedType).doc(feedId).collection("comments");
-
   try {
-    const commentsSnapshot = await commentsRef.orderBy("createdAt", "asc").get();
+    const { feedId, feedType } = req.query;
+
+    if (!feedId || !feedType) {
+      return res.status(400).json({ error: "Eksik parametreler: feedId ve feedType gerekli." });
+    }
+
+    // ✅ Yorumları çekmeden önce ana gönderinin varlığını kontrol et
+    const feedRef = db.collection(feedType).doc(feedId);
+    const feedDoc = await feedRef.get();
+
+    if (!feedDoc.exists) {
+      console.error("❌ Belirtilen feedId için gönderi bulunamadı:", feedId);
+      return res.status(404).json({ error: "Yorum yapılacak gönderi bulunamadı." });
+    }
+
+    const commentsRef = feedRef.collection("comments");
+    const commentsSnapshot = await commentsRef.orderBy("createdAt", "desc").get();
+
     const comments = commentsSnapshot.docs.map((doc) => ({
       id: doc.id,
       ...doc.data(),
@@ -174,43 +182,35 @@ exports.retrieveFeedComments = async (req, res) => {
 
     res.status(200).json({ comments });
   } catch (error) {
-    console.error("Yorumlar getirilirken hata:", error);
-    res.status(500).json({ error: "Yorumlar getirilemedi." });
+    console.error("Yorum çekilirken hata oluştu:", error);
+    res.status(500).json({ error: "Yorumlar çekilirken bir hata oluştu." });
   }
 };
 
 // Yorum Silme İşlemini Yöneten Fonksiyon
 exports.removeFeedComment = async (req, res) => {
   const { feedId, commentId } = req.body;
-  const userId = req.user.uid;
-  const feedType = "globalFeeds";
+  const uid = req.user?.uid;
 
-  if (!feedId || !commentId || !userId) {
-    return res.status(400).json({ error: "Eksik parametreler." });
+  if (!feedId || !commentId || !uid) {
+    return res.status(400).json({ error: "Feed ID, yorum ID veya kullanıcı ID eksik." });
   }
 
-  const commentRef = db
-    .collection(feedType)
-    .doc(feedId)
-    .collection("comments")
-    .doc(commentId);
-  const feedRef = db.collection(feedType).doc(feedId);
-
   try {
+    const commentRef = db.collection("globalFeeds").doc(feedId).collection("comments").doc(commentId);
+    
     const commentDoc = await commentRef.get();
 
     if (!commentDoc.exists) {
       return res.status(404).json({ error: "Yorum bulunamadı." });
     }
 
-    if (commentDoc.data().uid !== userId) {
+    if (commentDoc.data().uid !== uid) {
       return res.status(403).json({ error: "Bu yorumu silme yetkiniz yok." });
     }
 
-    await db.runTransaction(async (transaction) => {
-      transaction.delete(commentRef);
-    });
-
+    await commentRef.delete();
+    
     res.status(200).json({ success: true, message: "Yorum başarıyla silindi." });
   } catch (error) {
     console.error("Yorum silinirken hata:", error);
