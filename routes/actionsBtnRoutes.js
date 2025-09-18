@@ -1,3 +1,5 @@
+// actionsBtnRoutes.js
+
 const express = require("express");
 const admin = require("firebase-admin");
 const validator = require("validator");
@@ -33,11 +35,9 @@ function mapCollection(targetType) {
 }
 
 // ✅ Payload validasyonu
-function validateActionPayload(body) {
+function validateTargetPayload(body) {
   if (!body) return "missing body";
-  const { type, targetType, targetId } = body; // 'save' type is removed from the list.
-  if (!type || !["like", "comment", "share"].includes(type))
-    return "invalid type";
+  const { targetType, targetId } = body;
   if (!targetType || !["post", "feed", "feeling"].includes(targetType))
     return "invalid targetType";
   if (!targetId || typeof targetId !== "string" || validator.isEmpty(targetId))
@@ -51,63 +51,140 @@ function sanitizeString(s) {
 }
 
 // ---------------------------------------------------
-// 📌 Like Toggle
-router.post("/toggle", verifyFirebaseToken, async (req, res) => {
+// 📌 Yeni Endpoint: Toggle Like
+router.post("/toggleLike", verifyFirebaseToken, async (req, res) => {
   try {
-    const validationErr = validateActionPayload(req.body);
+    const validationErr = validateTargetPayload(req.body);
     if (validationErr) return res.status(400).json({ error: validationErr });
 
-    const { type, targetType, targetId } = req.body; // Only 'like' is allowed here
-    if (type !== "like") {
-      return res.status(400).json({ error: "invalid action type for toggle" });
-    }
-
+    const { targetType, targetId } = req.body;
     const cleanTargetId = sanitizeString(targetId);
     const collectionName = mapCollection(targetType);
     if (!collectionName)
       return res.status(400).json({ error: "invalid targetType" });
 
-    const actionId = `${type}_${targetType}_${cleanTargetId}_${req.user.uid}`;
-    const actionRef = db.collection("actions").doc(actionId);
+    const likeRef = db.collection("users").doc(req.user.uid).collection("likes").doc(cleanTargetId);
     const targetRef = db.collection(collectionName).doc(cleanTargetId);
 
+    let isLiked = false;
+    let newStats;
+
     await db.runTransaction(async (t) => {
-      const [actionSnap, targetSnap] = await Promise.all([
-        t.get(actionRef),
+      const [likeSnap, targetSnap] = await Promise.all([
+        t.get(likeRef),
         t.get(targetRef),
       ]);
       if (!targetSnap.exists) throw new Error("target not found");
 
-      if (actionSnap.exists) {
-        t.delete(actionRef); // Update the `stats.likes` field
-        t.update(targetRef, {
-          "stats.likes": admin.firestore.FieldValue.increment(-1),
-        });
+      const currentStats = targetSnap.data().stats || { likes: 0, comments: 0, shares: 0 };
+      newStats = { ...currentStats };
+
+      if (likeSnap.exists) {
+        t.delete(likeRef);
+        newStats.likes = Math.max(0, currentStats.likes - 1);
+        isLiked = false;
       } else {
-        t.set(actionRef, {
-          type,
-          targetType,
-          targetId: cleanTargetId,
-          userId: req.user.uid,
+        t.set(likeRef, {
+          postId: cleanTargetId,
+          postType: collectionName,
           createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        }); // Update the `stats.likes` field
-        t.update(targetRef, {
-          "stats.likes": admin.firestore.FieldValue.increment(1),
         });
+        newStats.likes = (currentStats.likes || 0) + 1;
+        isLiked = true;
       }
+
+      t.update(targetRef, { stats: newStats });
     });
 
-    return res.json({ ok: true });
+    return res.json({ ok: true, liked: isLiked, stats: newStats });
   } catch (err) {
-    console.error("ToggleActionFail:", err.message);
+    console.error("ToggleLikeFail:", err.message);
     return res.status(500).json({ error: err.message });
   }
 });
 
+// 📌 Yeni Endpoint: Toggle Save
+router.post("/toggleSave", verifyFirebaseToken, async (req, res) => {
+  try {
+    const validationErr = validateTargetPayload(req.body);
+    if (validationErr) return res.status(400).json({ error: validationErr });
+
+    const { targetType, targetId } = req.body;
+    const cleanTargetId = sanitizeString(targetId);
+    const collectionName = mapCollection(targetType);
+    if (!collectionName)
+      return res.status(400).json({ error: "invalid targetType" });
+
+    const saveRef = db.collection("users").doc(req.user.uid).collection("saves").doc(cleanTargetId);
+    const targetRef = db.collection(collectionName).doc(cleanTargetId);
+
+    let isSaved = false;
+
+    await db.runTransaction(async (t) => {
+      const [saveSnap, targetSnap] = await Promise.all([
+        t.get(saveRef),
+        t.get(targetRef),
+      ]);
+      if (!targetSnap.exists) throw new Error("target not found");
+
+      if (saveSnap.exists) {
+        t.delete(saveRef);
+        isSaved = false;
+      } else {
+        t.set(saveRef, {
+          postId: cleanTargetId,
+          postType: collectionName,
+          createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+        isSaved = true;
+      }
+    });
+
+    return res.json({ ok: true, saved: isSaved });
+  } catch (err) {
+    console.error("ToggleSaveFail:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 📌 Yeni Endpoint: Stats Getirme
+router.get("/getStats/:targetType/:targetId", verifyFirebaseToken, async (req, res) => {
+  try {
+    const { targetType, targetId } = req.params;
+    const cleanTargetId = sanitizeString(targetId);
+    const collectionName = mapCollection(targetType);
+    if (!collectionName)
+      return res.status(400).json({ error: "invalid targetType" });
+
+    const targetRef = db.collection(collectionName).doc(cleanTargetId);
+    const targetSnap = await targetRef.get();
+    if (!targetSnap.exists) {
+      return res.status(404).json({ error: "target not found" });
+    }
+
+    const stats = targetSnap.data().stats || { likes: 0, comments: 0, shares: 0 };
+    
+    // Kullanıcının beğenme ve kaydetme durumlarını kontrol etme
+    const [likeSnap, saveSnap] = await Promise.all([
+      db.collection("users").doc(req.user.uid).collection("likes").doc(cleanTargetId).get(),
+      db.collection("users").doc(req.user.uid).collection("saves").doc(cleanTargetId).get(),
+    ]);
+
+    const liked = likeSnap.exists;
+    const saved = saveSnap.exists;
+
+    return res.json({ ok: true, stats, liked, saved });
+  } catch (err) {
+    console.error("GetStatsFail:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// ---------------------------------------------------
 // 📌 Yorum Ekle
 router.post("/comment", verifyFirebaseToken, async (req, res) => {
   try {
-    const validationErr = validateActionPayload(req.body);
+    const validationErr = validateTargetPayload(req.body);
     if (validationErr) return res.status(400).json({ error: validationErr });
     if (!req.body.content)
       return res.status(400).json({ error: "missing content" });
@@ -135,14 +212,13 @@ router.post("/comment", verifyFirebaseToken, async (req, res) => {
       if (!targetSnap.exists) throw new Error("target not found");
 
       t.set(commentRef, {
-        // Store full user info with the comment
         uid: req.user.uid,
         username: userData.username,
         displayName: userData.displayName,
         photoURL: userData.photoURL,
-        text: content, // Changed to 'text' as requested
+        text: content,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      }); // Update the `stats.comments` field
+      });
       t.update(targetRef, {
         "stats.comments": admin.firestore.FieldValue.increment(1),
       });
@@ -155,7 +231,7 @@ router.post("/comment", verifyFirebaseToken, async (req, res) => {
   }
 });
 
-// 📌 Yorum Sil
+// Diğer yorum endpoint’leri aynı şekilde kalabilir
 router.delete(
   "/comment/:targetType/:targetId/:commentId",
   verifyFirebaseToken,
@@ -176,10 +252,10 @@ router.delete(
       await db.runTransaction(async (t) => {
         const snap = await t.get(commentRef);
         if (!snap.exists) throw new Error("comment not found");
-        const commentData = snap.data(); // Check if 'uid' field exists and matches the user's uid
+        const commentData = snap.data();
         if (commentData.uid !== req.user.uid) throw new Error("forbidden");
 
-        t.delete(commentRef); // Decrement the `stats.comments` field
+        t.delete(commentRef);
         t.update(db.collection(collectionName).doc(cleanTargetId), {
           "stats.comments": admin.firestore.FieldValue.increment(-1),
         });
@@ -195,7 +271,8 @@ router.delete(
   }
 );
 
-// 📌 Yorumları Getir
+// Yorumları getir ve paylaş linki endpoint’leri değişmedi
+
 router.get(
   "/comments/:targetType/:targetId",
   verifyFirebaseToken,
@@ -225,7 +302,6 @@ router.get(
   }
 );
 
-// 📌 Paylaşma Linki Alma
 router.post("/shareLink", verifyFirebaseToken, async (req, res) => {
   try {
     const { targetType, targetId } = req.body;
@@ -243,66 +319,11 @@ router.post("/shareLink", verifyFirebaseToken, async (req, res) => {
     const shareLink = `${baseUrl}/${targetType}/${cleanTargetId}`;
 
     await targetRef.update({
-      // Update the `stats.shares` field
       "stats.shares": admin.firestore.FieldValue.increment(1),
     });
     return res.json({ ok: true, shareLink });
   } catch (err) {
     console.error("GetShareLinkFail:", err.message);
-    return res.status(500).json({ error: err.message });
-  }
-});
-
-// 📌 Batch Actions
-router.post("/batch", verifyFirebaseToken, async (req, res) => {
-  try {
-    const { actions } = req.body;
-    if (!Array.isArray(actions) || actions.length === 0) {
-      return res
-        .status(400)
-        .json({ error: "actions array is missing or empty" });
-    }
-
-    const results = [];
-    const batch = db.batch();
-
-    for (const action of actions) {
-      const { type, targetType, targetId } = action;
-      const cleanTargetId = sanitizeString(targetId);
-      const collectionName = mapCollection(targetType); // 'save' is removed from the allowed types
-
-      if (!collectionName || !["like", "share"].includes(type)) {
-        results.push({ success: false, error: "Invalid action" });
-        continue;
-      }
-
-      const actionId = `${type}_${targetType}_${cleanTargetId}_${req.user.uid}`;
-      const actionRef = db.collection("actions").doc(actionId);
-      const targetRef = db.collection(collectionName).doc(cleanTargetId);
-
-      batch.update(targetRef, {
-        [`stats.${type}s`]: admin.firestore.FieldValue.increment(
-          action.finalState ? 1 : -1
-        ),
-      });
-
-      if (action.finalState) {
-        batch.set(actionRef, {
-          type,
-          targetType,
-          targetId: cleanTargetId,
-          userId: req.user.uid,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-      } else {
-        batch.delete(actionRef);
-      }
-    }
-
-    await batch.commit();
-    res.json({ results });
-  } catch (err) {
-    console.error("BatchActionFail:", err.message);
     return res.status(500).json({ error: err.message });
   }
 });
