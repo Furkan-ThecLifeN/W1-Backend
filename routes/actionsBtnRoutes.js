@@ -1,5 +1,3 @@
-// actionsBtnRoutes.js
-
 const express = require("express");
 const admin = require("firebase-admin");
 const validator = require("validator");
@@ -7,7 +5,7 @@ const validator = require("validator");
 const router = express.Router();
 const db = admin.firestore();
 
-// 🔒 Middleware: Token kontrol
+// 🔒 Middleware: Token kontrolü
 async function verifyFirebaseToken(req, res, next) {
   try {
     const authHeader = req.headers.authorization || "";
