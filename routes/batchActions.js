@@ -16,11 +16,12 @@ function mapCollection(targetType) {
 }
 
 async function batchActionsController(req, res) {
-  const { items } = req.body;
-  const uid = req.user?.uid;
+  const { items } = req.body; // items: [{type, targetType, targetId, finalState}]
+  const uid = req.user?.uid; // middleware’den gelmeli
 
-  if (!Array.isArray(items)) return res.status(400).json({ error: "invalid items" });
-  if (!uid) return res.status(401).json({ error: "unauthorized" });
+  if (!Array.isArray(items)) {
+    return res.status(400).json({ error: "invalid items" });
+  }
 
   const batch = db.batch();
 
@@ -32,7 +33,6 @@ async function batchActionsController(req, res) {
 
       const targetRef = db.collection(collectionName).doc(targetId);
       const targetSnap = await targetRef.get();
-
       if (!targetSnap.exists) continue;
 
       const userRef = db.collection("users").doc(uid);

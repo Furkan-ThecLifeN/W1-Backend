@@ -10,6 +10,7 @@ const useragent = require("express-useragent");
 const path = require("path");
 const fs = require("fs");
 const multer = require("multer");
+const verifyFirebaseToken = require("./middlewares/auth");
 
 const authRoutes = require("./routes/authRoutes");
 const userRoutes = require("./routes/userRoutes");
@@ -18,6 +19,8 @@ const feedsRoutes = require("./routes/feedsRoutes");
 const feelingsRoutes = require("./routes/feelingsRoutes");
 const postRoutes = require("./routes/postRoutes");
 const actionsBtnRoutes = require("./routes/actionsBtnRoutes");
+const { batchActionsController } = require("./routes/batchActions");
+
 
 
 const { startDeletionJob } = require("./cronJob");
@@ -70,6 +73,9 @@ app.use("/api/feeds", feedsRoutes);
 app.use("/api/feelings", feelingsRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/actions", actionsBtnRoutes); 
+
+// ✅ Batch endpoint ayrıca bağla
+app.post("/api/actions/batch", verifyFirebaseToken, batchActionsController);
 
 
 app.use(express.static("public"));

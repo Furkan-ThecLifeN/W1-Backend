@@ -1,10 +1,20 @@
-// actionBtnRoutes.js
 const express = require("express");
 const admin = require("firebase-admin");
 const validator = require("validator");
+const rateLimit = require("express-rate-limit");
 
 const router = express.Router();
 const db = admin.firestore();
+
+// 🚀 Genel API Hız Sınırlayıcı (Rate Limiter)
+// Bu sınırlayıcı, IP başına dakikada 30 isteğe izin verir.
+const apiLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 dakika
+  max: 30, // 1 dakika içinde 30 istek
+  message: "Çok fazla istek yaptınız, lütfen biraz bekleyin."
+});
+
+router.use(apiLimiter);
 
 // 🔒 Middleware: Token kontrolü
 async function verifyFirebaseToken(req, res, next) {
@@ -56,7 +66,10 @@ router.post("/toggleLike", verifyFirebaseToken, async (req, res) => {
     const validationErr = validateTargetPayload(req.body);
     if (validationErr) return res.status(400).json({ error: validationErr });
 
-    const { targetType, targetId } = req.body;
+    const { targetType, targetId, finalState } = req.body;
+    if (typeof finalState !== 'boolean') {
+      return res.status(400).json({ error: "missing finalState" });
+    }
     const cleanTargetId = sanitizeString(targetId);
     const collectionName = mapCollection(targetType);
     if (!collectionName)
@@ -65,7 +78,6 @@ router.post("/toggleLike", verifyFirebaseToken, async (req, res) => {
     const likeRef = db.collection("users").doc(req.user.uid).collection("likes").doc(cleanTargetId);
     const targetRef = db.collection(collectionName).doc(cleanTargetId);
 
-    let isLiked = false;
     let newStats;
 
     await db.runTransaction(async (t) => {
@@ -75,27 +87,29 @@ router.post("/toggleLike", verifyFirebaseToken, async (req, res) => {
       ]);
       if (!targetSnap.exists) throw new Error("target not found");
 
-      const currentStats = targetSnap.data().stats || { likes: 0, comments: 0, shares: 0 };
+      const currentStats = targetSnap.data().stats || { likes: 0, comments: 0, shares: 0, saves: 0 };
       newStats = { ...currentStats };
 
-      if (likeSnap.exists) {
-        t.delete(likeRef);
-        newStats.likes = Math.max(0, currentStats.likes - 1);
-        isLiked = false;
+      if (finalState) {
+        if (!likeSnap.exists) {
+          t.set(likeRef, {
+            postId: cleanTargetId,
+            postType: collectionName,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          newStats.likes = (currentStats.likes || 0) + 1;
+        }
       } else {
-        t.set(likeRef, {
-          postId: cleanTargetId,
-          postType: collectionName,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        newStats.likes = (currentStats.likes || 0) + 1;
-        isLiked = true;
+        if (likeSnap.exists) {
+          t.delete(likeRef);
+          newStats.likes = Math.max(0, currentStats.likes - 1);
+        }
       }
 
       t.update(targetRef, { stats: newStats });
     });
 
-    return res.json({ ok: true, liked: isLiked, stats: newStats });
+    return res.json({ ok: true, liked: finalState, stats: newStats });
   } catch (err) {
     console.error("ToggleLikeFail:", err.message);
     return res.status(500).json({ error: err.message });
@@ -108,7 +122,10 @@ router.post("/toggleSave", verifyFirebaseToken, async (req, res) => {
     const validationErr = validateTargetPayload(req.body);
     if (validationErr) return res.status(400).json({ error: validationErr });
 
-    const { targetType, targetId } = req.body;
+    const { targetType, targetId, finalState } = req.body;
+    if (typeof finalState !== 'boolean') {
+      return res.status(400).json({ error: "missing finalState" });
+    }
     const cleanTargetId = sanitizeString(targetId);
     const collectionName = mapCollection(targetType);
     if (!collectionName)
@@ -117,7 +134,7 @@ router.post("/toggleSave", verifyFirebaseToken, async (req, res) => {
     const saveRef = db.collection("users").doc(req.user.uid).collection("saves").doc(cleanTargetId);
     const targetRef = db.collection(collectionName).doc(cleanTargetId);
 
-    let isSaved = false;
+    let newStats;
 
     await db.runTransaction(async (t) => {
       const [saveSnap, targetSnap] = await Promise.all([
@@ -126,20 +143,28 @@ router.post("/toggleSave", verifyFirebaseToken, async (req, res) => {
       ]);
       if (!targetSnap.exists) throw new Error("target not found");
 
-      if (saveSnap.exists) {
-        t.delete(saveRef);
-        isSaved = false;
+      const currentStats = targetSnap.data().stats || { likes: 0, comments: 0, shares: 0, saves: 0 };
+      newStats = { ...currentStats };
+
+      if (finalState) {
+        if (!saveSnap.exists) {
+          t.set(saveRef, {
+            postId: cleanTargetId,
+            postType: collectionName,
+            createdAt: admin.firestore.FieldValue.serverTimestamp(),
+          });
+          newStats.saves = (currentStats.saves || 0) + 1;
+        }
       } else {
-        t.set(saveRef, {
-          postId: cleanTargetId,
-          postType: collectionName,
-          createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        });
-        isSaved = true;
+        if (saveSnap.exists) {
+          t.delete(saveRef);
+          newStats.saves = Math.max(0, currentStats.saves - 1);
+        }
       }
+      t.update(targetRef, { stats: newStats });
     });
 
-    return res.json({ ok: true, saved: isSaved });
+    return res.json({ ok: true, saved: finalState, stats: newStats });
   } catch (err) {
     console.error("ToggleSaveFail:", err.message);
     return res.status(500).json({ error: err.message });
@@ -161,8 +186,8 @@ router.get("/getStats/:targetType/:targetId", verifyFirebaseToken, async (req, r
       return res.status(404).json({ error: "target not found" });
     }
 
-    const stats = targetSnap.data().stats || { likes: 0, comments: 0, shares: 0 };
-    
+    const stats = targetSnap.data().stats || { likes: 0, comments: 0, shares: 0, saves: 0 };
+
     // Kullanıcının beğenme ve kaydetme durumlarını kontrol etme
     const [likeSnap, saveSnap] = await Promise.all([
       db.collection("users").doc(req.user.uid).collection("likes").doc(cleanTargetId).get(),
