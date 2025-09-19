@@ -1,3 +1,4 @@
+// actionBtnRoutes.js
 const express = require("express");
 const admin = require("firebase-admin");
 const validator = require("validator");
@@ -229,7 +230,6 @@ router.post("/comment", verifyFirebaseToken, async (req, res) => {
   }
 });
 
-// Diğer yorum endpoint’leri aynı şekilde kalabilir
 router.delete(
   "/comment/:targetType/:targetId/:commentId",
   verifyFirebaseToken,
@@ -269,8 +269,6 @@ router.delete(
   }
 );
 
-// Yorumları getir ve paylaş linki endpoint’leri değişmedi
-
 router.get(
   "/comments/:targetType/:targetId",
   verifyFirebaseToken,
@@ -300,6 +298,10 @@ router.get(
   }
 );
 
+// 📌 Rate Limit için basit in-memory cache
+const shareTimestamps = new Map();
+const RATE_LIMIT_MS = 5000; // 5 saniye
+
 router.post("/shareLink", verifyFirebaseToken, async (req, res) => {
   try {
     const { targetType, targetId } = req.body;
@@ -313,15 +315,62 @@ router.post("/shareLink", verifyFirebaseToken, async (req, res) => {
     if (!snap.exists)
       return res.status(404).json({ error: "target not found" });
 
+    // ✨ Rate limit kontrolü
+    const userId = req.user.uid;
+    const lastShareTime = shareTimestamps.get(userId);
+    if (lastShareTime && Date.now() - lastShareTime < RATE_LIMIT_MS) {
+      console.warn(`Rate limit triggered for user: ${userId}`);
+      // Client tarafı debounce'u zaten hallettiği için 429 yerine başarı mesajı dön
+      const baseUrl = process.env.APP_URL || "https://yourapp.com";
+      const shareLink = `${baseUrl}/${targetType}/${cleanTargetId}`;
+      return res.json({ ok: true, shareLink });
+    }
+
     const baseUrl = process.env.APP_URL || "https://yourapp.com";
     const shareLink = `${baseUrl}/${targetType}/${cleanTargetId}`;
 
     await targetRef.update({
       "stats.shares": admin.firestore.FieldValue.increment(1),
     });
+
+    // Son paylaşım zamanını güncelle
+    shareTimestamps.set(userId, Date.now());
+
     return res.json({ ok: true, shareLink });
   } catch (err) {
     console.error("GetShareLinkFail:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 📌 Yeni Endpoint: Tek seferde tüm feed verisini getirme
+router.get("/posts/feed", verifyFirebaseToken, async (req, res) => {
+  try {
+    // 1. Tüm postları getir
+    const [postsSnap, likedSnap, savedSnap] = await Promise.all([
+      db.collection("globalFeeds").get(),
+      db.collection("users").doc(req.user.uid).collection("likes").get(),
+      db.collection("users").doc(req.user.uid).collection("saves").get(),
+    ]);
+
+    // 2. Kullanıcının beğendiği ve kaydettiği post ID'lerini bir Set'e al
+    const likedPostIds = new Set(likedSnap.docs.map(doc => doc.id));
+    const savedPostIds = new Set(savedSnap.docs.map(doc => doc.id));
+
+    // 3. Post verilerini birleştir ve formatla
+    const posts = postsSnap.docs.map(doc => {
+      const postId = doc.id;
+      return {
+        id: postId,
+        ...doc.data(),
+        userLiked: likedPostIds.has(postId),
+        userSaved: savedPostIds.has(postId),
+      };
+    });
+
+    return res.json({ ok: true, posts });
+  } catch (err) {
+    console.error("GetPostsFeedFail:", err.message);
     return res.status(500).json({ error: err.message });
   }
 });
