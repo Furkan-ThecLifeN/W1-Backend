@@ -206,50 +206,41 @@ router.get("/getStats/:targetType/:targetId", verifyFirebaseToken, async (req, r
 });
 
 // ---------------------------------------------------
-// 📌 Yorum Ekle
+// 📌 Yorum Ekle (GÜNCELLENDİ)
 router.post("/comment", verifyFirebaseToken, async (req, res) => {
   try {
-    const validationErr = validateTargetPayload(req.body);
-    if (validationErr) return res.status(400).json({ error: validationErr });
-    if (!req.body.content)
-      return res.status(400).json({ error: "missing content" });
+    const { targetType, targetId, content } = req.body;
+    if (!targetType || !targetId) return res.status(400).json({ error: "invalid payload" });
+    if (!content || typeof content !== "string" || validator.isEmpty(content)) return res.status(400).json({ error: "missing content" });
 
-    const { targetType, targetId } = req.body;
-    const content = sanitizeString(req.body.content);
     const cleanTargetId = sanitizeString(targetId);
     const collectionName = mapCollection(targetType);
-    if (!collectionName)
-      return res.status(400).json({ error: "invalid targetType" });
+    if (!collectionName) return res.status(400).json({ error: "invalid targetType" });
 
     const userRef = db.collection("users").doc(req.user.uid);
-    const userData = await userRef.get().then((snap) => snap.data());
-    if (!userData) throw new Error("user not found");
+    const userSnap = await userRef.get();
+    if (!userSnap.exists) return res.status(404).json({ error: "user not found" });
+    const userData = userSnap.data();
 
-    const commentRef = db
-      .collection(collectionName)
-      .doc(cleanTargetId)
-      .collection("comments")
-      .doc();
+    const commentRef = db.collection(collectionName).doc(cleanTargetId).collection("comments").doc();
+    const commentObj = {
+      id: commentRef.id,
+      uid: req.user.uid,
+      username: userData.username || "",
+      displayName: userData.displayName || "",
+      photoURL: userData.photoURL || "",
+      text: sanitizeString(content),
+    };
 
     await db.runTransaction(async (t) => {
       const targetRef = db.collection(collectionName).doc(cleanTargetId);
       const targetSnap = await t.get(targetRef);
       if (!targetSnap.exists) throw new Error("target not found");
-
-      t.set(commentRef, {
-        uid: req.user.uid,
-        username: userData.username,
-        displayName: userData.displayName,
-        photoURL: userData.photoURL,
-        text: content,
-        createdAt: admin.firestore.FieldValue.serverTimestamp(),
-      });
-      t.update(targetRef, {
-        "stats.comments": admin.firestore.FieldValue.increment(1),
-      });
+      t.set(commentRef, { ...commentObj, createdAt: admin.firestore.FieldValue.serverTimestamp() });
+      t.update(targetRef, { "stats.comments": admin.firestore.FieldValue.increment(1) });
     });
 
-    return res.json({ ok: true, id: commentRef.id });
+    return res.json({ ok: true, comment: commentObj });
   } catch (err) {
     console.error("AddCommentFail:", err.message);
     return res.status(500).json({ error: err.message });
@@ -295,6 +286,7 @@ router.delete(
   }
 );
 
+// 📌 Yorum Listeleme (GÜNCELLENDİ)
 router.get(
   "/comments/:targetType/:targetId",
   verifyFirebaseToken,
@@ -303,8 +295,7 @@ router.get(
       const { targetType, targetId } = req.params;
       const cleanTargetId = sanitizeString(targetId);
       const collectionName = mapCollection(targetType);
-      if (!collectionName)
-        return res.status(400).json({ error: "invalid targetType" });
+      if (!collectionName) return res.status(400).json({ error: "invalid targetType" });
 
       const commentsRef = db
         .collection(collectionName)
@@ -312,10 +303,11 @@ router.get(
         .collection("comments")
         .orderBy("createdAt", "desc");
       const snapshot = await commentsRef.get();
-      const comments = snapshot.docs.map((doc) => ({
-        id: doc.id,
-        ...doc.data(),
-      }));
+      const comments = snapshot.docs.map((doc) => {
+        const data = doc.data() || {};
+        const { createdAt, ...rest } = data;
+        return { id: doc.id, ...rest };
+      });
       return res.json({ ok: true, comments });
     } catch (err) {
       console.error("GetCommentsFail:", err.message);
@@ -323,6 +315,73 @@ router.get(
     }
   }
 );
+
+// ---------------------------------------------------
+// 📌 Yeni Endpoint: Takip Edilen Kullanıcıları Getirme
+router.get("/following", verifyFirebaseToken, async (req, res) => {
+  try {
+    const uid = req.user.uid;
+    const snap = await db.collection("follows").where("followerUid", "==", uid).get();
+    const followingUids = snap.docs.map(d => d.data().followingUid).filter(Boolean).filter(id => id !== uid);
+    if (!followingUids.length) return res.json({ ok: true, users: [] });
+    const usersSnap = await Promise.all(followingUids.map(id => db.collection("users").doc(id).get()));
+    const users = usersSnap.map(s => {
+      const d = s.data() || {};
+      return { uid: s.id, username: d.username || "", displayName: d.displayName || "", photoURL: d.photoURL || "" };
+    });
+    return res.json({ ok: true, users });
+  } catch (err) {
+    console.error("GetFollowingFail:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
+
+// 📌 Yeni Endpoint: Gönderi Paylaşma
+router.post("/sendShare", verifyFirebaseToken, async (req, res) => {
+  try {
+    const { postId, recipients } = req.body;
+    if (!postId || !Array.isArray(recipients)) return res.status(400).json({ error: "invalid payload" });
+
+    const uid = req.user.uid;
+    const sanitizedRecipients = recipients.map(sanitizeString).filter(r => r && r !== uid);
+    if (!sanitizedRecipients.length) return res.status(400).json({ error: "no recipients" });
+
+    const allowed = [];
+    const chunkSize = 10;
+    for (let i = 0; i < sanitizedRecipients.length; i += chunkSize) {
+      const chunk = sanitizedRecipients.slice(i, i + chunkSize);
+      const snap = await db.collection("follows").where("followerUid", "==", uid).where("followingUid", "in", chunk).get();
+      snap.docs.forEach(d => {
+        const data = d.data();
+        if (data && data.followingUid) allowed.push(data.followingUid);
+      });
+    }
+    if (!allowed.length) return res.status(400).json({ error: "recipients not allowed" });
+
+    const batch = db.batch();
+    const collectionName = "globalFeeds";
+    const targetRef = db.collection(collectionName).doc(postId);
+    batch.update(targetRef, { "stats.shares": admin.firestore.FieldValue.increment(allowed.length) });
+    const baseUrl = process.env.APP_URL || "https://yourapp.com";
+    const shareLink = `${baseUrl}/feelings/${postId}`;
+    allowed.forEach(recipientUid => {
+      const notifRef = db.collection("users").doc(recipientUid).collection("notifications").doc();
+      batch.set(notifRef, {
+        fromUid: uid,
+        type: "share",
+        postId,
+        link: shareLink,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+        read: false
+      });
+    });
+    await batch.commit();
+    return res.json({ ok: true, sentTo: allowed.length, shareLink });
+  } catch (err) {
+    console.error("SendShareFail:", err.message);
+    return res.status(500).json({ error: err.message });
+  }
+});
 
 // 📌 Rate Limit için basit in-memory cache
 const shareTimestamps = new Map();
