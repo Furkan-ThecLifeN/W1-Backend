@@ -334,7 +334,6 @@ exports.uploadFileAndSendMessage = async (req, res) => {
   }
 };
 
-
 // 5. Tek Kullanımlık Dosya Sunma ve Silme
 exports.serveAndDestroyFile = async (req, res) => {
   try {

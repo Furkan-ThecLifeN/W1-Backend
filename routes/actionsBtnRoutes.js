@@ -3,6 +3,8 @@ const express = require("express");
 const admin = require("firebase-admin");
 const validator = require("validator");
 const rateLimit = require("express-rate-limit");
+const getPostLink = require("../utils/getPostLink");
+
 
 const router = express.Router();
 const db = admin.firestore();
@@ -12,7 +14,7 @@ const db = admin.firestore();
 const apiLimiter = rateLimit({
   windowMs: 60 * 1000, // 1 dakika
   max: 30, // 1 dakika içinde 30 istek
-  message: "Çok fazla istek yaptınız, lütfen biraz bekleyin."
+  message: "Çok fazla istek yaptınız, lütfen biraz bekleyin.",
 });
 
 router.use(apiLimiter);
@@ -61,6 +63,138 @@ function sanitizeString(s) {
 }
 
 // ---------------------------------------------------
+// 📌 Yeni Endpoint: Gönderi Paylaşma
+router.post("/share", verifyFirebaseToken, async (req, res) => {
+  const { targetType, targetId, receiverUid } = req.body;
+  const senderUid = req.user.uid;
+
+  if (!targetType || !targetId || !receiverUid) {
+    return res.status(400).json({
+      error: "Eksik parametreler: targetType, targetId, receiverUid"
+    });
+  }
+
+  try {
+    await db.runTransaction(async (t) => {
+      // ---- 1) Tüm GEREKLİ okuma işlemleri ----
+      const collectionRef = db.collection(mapCollection(targetType));
+      const targetRef = collectionRef.doc(targetId);
+      const targetDoc = await t.get(targetRef);
+      if (!targetDoc.exists) throw new Error("Hedef gönderi bulunamadı.");
+
+      const conversationId = [senderUid, receiverUid].sort().join("_");
+      const conversationRef = db.collection("conversations").doc(conversationId);
+      const conversationDoc = await t.get(conversationRef);
+
+      const messageRef = conversationRef.collection("messages").doc();
+
+      const postLink = getPostLink(targetType, targetId);
+
+      // ---- 2) Okumalar bitti → şimdi YAZMALAR ----
+      // Paylaşım sayısını artır
+      t.update(targetRef, {
+        "stats.shares": admin.firestore.FieldValue.increment(1),
+      });
+
+      if (!conversationDoc.exists) {
+        t.set(conversationRef, {
+          members: [senderUid, receiverUid],
+          lastMessage: {
+            senderId: senderUid,
+            text: postLink,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      } else {
+        t.update(conversationRef, {
+          lastMessage: {
+            senderId: senderUid,
+            text: postLink,
+            updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+          },
+          updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+        });
+      }
+
+      t.set(messageRef, {
+        senderId: senderUid,
+        receiverUid: receiverUid,
+        text: postLink,
+        type: "share",
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+    });
+
+    res.json({ success: true, message: "Paylaşım başarıyla gönderildi." });
+  } catch (err) {
+    console.error("Paylaşım transaction hatası:", err);
+    res.status(500).json({ error: err.message });
+  }
+});
+
+// 📌 Yeni Endpoint: Yorum Silme
+router.delete(
+  "/deleteComment/:commentId",
+  verifyFirebaseToken,
+  async (req, res) => {
+    const { commentId } = req.params;
+    const currentUserId = req.user.uid;
+
+    // Query parametrelerinden hedef post bilgilerini al
+    const { targetType, targetId } = req.query;
+
+    if (!commentId || !targetType || !targetId) {
+      return res.status(400).json({ error: "Eksik parametreler." });
+    }
+
+    const collectionName = mapCollection(targetType);
+    if (!collectionName) {
+      return res.status(400).json({ error: "Geçersiz targetType." });
+    }
+
+    const commentRef = db
+      .collection(collectionName)
+      .doc(targetId)
+      .collection("comments")
+      .doc(commentId);
+    const postRef = db.collection(collectionName).doc(targetId);
+
+    try {
+      await db.runTransaction(async (t) => {
+        const commentSnap = await t.get(commentRef);
+
+        if (!commentSnap.exists) {
+          throw new Error("Yorum bulunamadı.");
+        }
+
+        const commentData = commentSnap.data();
+        if (commentData.uid !== currentUserId) {
+          throw new Error("Yalnızca kendi yorumunuzu silebilirsiniz.");
+        }
+
+        // 1. Yorumu sil
+        t.delete(commentRef);
+
+        // 2. Postun yorum sayısını azalt
+        t.update(postRef, {
+          "stats.comments": admin.firestore.FieldValue.increment(-1),
+        });
+      });
+
+      res.status(200).json({ ok: true, message: "Yorum başarıyla silindi." });
+    } catch (error) {
+      console.error("Yorum silme işlemi başarısız:", error);
+      res
+        .status(500)
+        .json({
+          error: error.message || "Yorum silme sırasında bir hata oluştu.",
+        });
+    }
+  }
+);
+
+// ---------------------------------------------------
 // 📌 Yeni Endpoint: Toggle Like
 router.post("/toggleLike", verifyFirebaseToken, async (req, res) => {
   try {
@@ -68,7 +202,7 @@ router.post("/toggleLike", verifyFirebaseToken, async (req, res) => {
     if (validationErr) return res.status(400).json({ error: validationErr });
 
     const { targetType, targetId, finalState } = req.body;
-    if (typeof finalState !== 'boolean') {
+    if (typeof finalState !== "boolean") {
       return res.status(400).json({ error: "missing finalState" });
     }
     const cleanTargetId = sanitizeString(targetId);
@@ -76,7 +210,11 @@ router.post("/toggleLike", verifyFirebaseToken, async (req, res) => {
     if (!collectionName)
       return res.status(400).json({ error: "invalid targetType" });
 
-    const likeRef = db.collection("users").doc(req.user.uid).collection("likes").doc(cleanTargetId);
+    const likeRef = db
+      .collection("users")
+      .doc(req.user.uid)
+      .collection("likes")
+      .doc(cleanTargetId);
     const targetRef = db.collection(collectionName).doc(cleanTargetId);
 
     let newStats;
@@ -88,7 +226,12 @@ router.post("/toggleLike", verifyFirebaseToken, async (req, res) => {
       ]);
       if (!targetSnap.exists) throw new Error("target not found");
 
-      const currentStats = targetSnap.data().stats || { likes: 0, comments: 0, shares: 0, saves: 0 };
+      const currentStats = targetSnap.data().stats || {
+        likes: 0,
+        comments: 0,
+        shares: 0,
+        saves: 0,
+      };
       newStats = { ...currentStats };
 
       if (finalState) {
@@ -124,7 +267,7 @@ router.post("/toggleSave", verifyFirebaseToken, async (req, res) => {
     if (validationErr) return res.status(400).json({ error: validationErr });
 
     const { targetType, targetId, finalState } = req.body;
-    if (typeof finalState !== 'boolean') {
+    if (typeof finalState !== "boolean") {
       return res.status(400).json({ error: "missing finalState" });
     }
     const cleanTargetId = sanitizeString(targetId);
@@ -132,7 +275,11 @@ router.post("/toggleSave", verifyFirebaseToken, async (req, res) => {
     if (!collectionName)
       return res.status(400).json({ error: "invalid targetType" });
 
-    const saveRef = db.collection("users").doc(req.user.uid).collection("saves").doc(cleanTargetId);
+    const saveRef = db
+      .collection("users")
+      .doc(req.user.uid)
+      .collection("saves")
+      .doc(cleanTargetId);
     const targetRef = db.collection(collectionName).doc(cleanTargetId);
 
     let newStats;
@@ -144,7 +291,12 @@ router.post("/toggleSave", verifyFirebaseToken, async (req, res) => {
       ]);
       if (!targetSnap.exists) throw new Error("target not found");
 
-      const currentStats = targetSnap.data().stats || { likes: 0, comments: 0, shares: 0, saves: 0 };
+      const currentStats = targetSnap.data().stats || {
+        likes: 0,
+        comments: 0,
+        shares: 0,
+        saves: 0,
+      };
       newStats = { ...currentStats };
 
       if (finalState) {
@@ -173,56 +325,83 @@ router.post("/toggleSave", verifyFirebaseToken, async (req, res) => {
 });
 
 // 📌 Yeni Endpoint: Stats Getirme
-router.get("/getStats/:targetType/:targetId", verifyFirebaseToken, async (req, res) => {
-  try {
-    const { targetType, targetId } = req.params;
-    const cleanTargetId = sanitizeString(targetId);
-    const collectionName = mapCollection(targetType);
-    if (!collectionName)
-      return res.status(400).json({ error: "invalid targetType" });
+router.get(
+  "/getStats/:targetType/:targetId",
+  verifyFirebaseToken,
+  async (req, res) => {
+    try {
+      const { targetType, targetId } = req.params;
+      const cleanTargetId = sanitizeString(targetId);
+      const collectionName = mapCollection(targetType);
+      if (!collectionName)
+        return res.status(400).json({ error: "invalid targetType" });
 
-    const targetRef = db.collection(collectionName).doc(cleanTargetId);
-    const targetSnap = await targetRef.get();
-    if (!targetSnap.exists) {
-      return res.status(404).json({ error: "target not found" });
+      const targetRef = db.collection(collectionName).doc(cleanTargetId);
+      const targetSnap = await targetRef.get();
+      if (!targetSnap.exists) {
+        return res.status(404).json({ error: "target not found" });
+      }
+
+      const stats = targetSnap.data().stats || {
+        likes: 0,
+        comments: 0,
+        shares: 0,
+        saves: 0,
+      };
+
+      // Kullanıcının beğenme ve kaydetme durumlarını kontrol etme
+      const [likeSnap, saveSnap] = await Promise.all([
+        db
+          .collection("users")
+          .doc(req.user.uid)
+          .collection("likes")
+          .doc(cleanTargetId)
+          .get(),
+        db
+          .collection("users")
+          .doc(req.user.uid)
+          .collection("saves")
+          .doc(cleanTargetId)
+          .get(),
+      ]);
+
+      const liked = likeSnap.exists;
+      const saved = saveSnap.exists;
+
+      return res.json({ ok: true, stats, liked, saved });
+    } catch (err) {
+      console.error("GetStatsFail:", err.message);
+      return res.status(500).json({ error: err.message });
     }
-
-    const stats = targetSnap.data().stats || { likes: 0, comments: 0, shares: 0, saves: 0 };
-
-    // Kullanıcının beğenme ve kaydetme durumlarını kontrol etme
-    const [likeSnap, saveSnap] = await Promise.all([
-      db.collection("users").doc(req.user.uid).collection("likes").doc(cleanTargetId).get(),
-      db.collection("users").doc(req.user.uid).collection("saves").doc(cleanTargetId).get(),
-    ]);
-
-    const liked = likeSnap.exists;
-    const saved = saveSnap.exists;
-
-    return res.json({ ok: true, stats, liked, saved });
-  } catch (err) {
-    console.error("GetStatsFail:", err.message);
-    return res.status(500).json({ error: err.message });
   }
-});
+);
 
 // ---------------------------------------------------
 // 📌 Yorum Ekle (GÜNCELLENDİ)
 router.post("/comment", verifyFirebaseToken, async (req, res) => {
   try {
     const { targetType, targetId, content } = req.body;
-    if (!targetType || !targetId) return res.status(400).json({ error: "invalid payload" });
-    if (!content || typeof content !== "string" || validator.isEmpty(content)) return res.status(400).json({ error: "missing content" });
+    if (!targetType || !targetId)
+      return res.status(400).json({ error: "invalid payload" });
+    if (!content || typeof content !== "string" || validator.isEmpty(content))
+      return res.status(400).json({ error: "missing content" });
 
     const cleanTargetId = sanitizeString(targetId);
     const collectionName = mapCollection(targetType);
-    if (!collectionName) return res.status(400).json({ error: "invalid targetType" });
+    if (!collectionName)
+      return res.status(400).json({ error: "invalid targetType" });
 
     const userRef = db.collection("users").doc(req.user.uid);
     const userSnap = await userRef.get();
-    if (!userSnap.exists) return res.status(404).json({ error: "user not found" });
+    if (!userSnap.exists)
+      return res.status(404).json({ error: "user not found" });
     const userData = userSnap.data();
 
-    const commentRef = db.collection(collectionName).doc(cleanTargetId).collection("comments").doc();
+    const commentRef = db
+      .collection(collectionName)
+      .doc(cleanTargetId)
+      .collection("comments")
+      .doc();
     const commentObj = {
       id: commentRef.id,
       uid: req.user.uid,
@@ -236,8 +415,13 @@ router.post("/comment", verifyFirebaseToken, async (req, res) => {
       const targetRef = db.collection(collectionName).doc(cleanTargetId);
       const targetSnap = await t.get(targetRef);
       if (!targetSnap.exists) throw new Error("target not found");
-      t.set(commentRef, { ...commentObj, createdAt: admin.firestore.FieldValue.serverTimestamp() });
-      t.update(targetRef, { "stats.comments": admin.firestore.FieldValue.increment(1) });
+      t.set(commentRef, {
+        ...commentObj,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+      t.update(targetRef, {
+        "stats.comments": admin.firestore.FieldValue.increment(1),
+      });
     });
 
     return res.json({ ok: true, comment: commentObj });
@@ -295,7 +479,8 @@ router.get(
       const { targetType, targetId } = req.params;
       const cleanTargetId = sanitizeString(targetId);
       const collectionName = mapCollection(targetType);
-      if (!collectionName) return res.status(400).json({ error: "invalid targetType" });
+      if (!collectionName)
+        return res.status(400).json({ error: "invalid targetType" });
 
       const commentsRef = db
         .collection(collectionName)
@@ -321,13 +506,26 @@ router.get(
 router.get("/following", verifyFirebaseToken, async (req, res) => {
   try {
     const uid = req.user.uid;
-    const snap = await db.collection("follows").where("followerUid", "==", uid).get();
-    const followingUids = snap.docs.map(d => d.data().followingUid).filter(Boolean).filter(id => id !== uid);
+    const snap = await db
+      .collection("follows")
+      .where("followerUid", "==", uid)
+      .get();
+    const followingUids = snap.docs
+      .map((d) => d.data().followingUid)
+      .filter(Boolean)
+      .filter((id) => id !== uid);
     if (!followingUids.length) return res.json({ ok: true, users: [] });
-    const usersSnap = await Promise.all(followingUids.map(id => db.collection("users").doc(id).get()));
-    const users = usersSnap.map(s => {
+    const usersSnap = await Promise.all(
+      followingUids.map((id) => db.collection("users").doc(id).get())
+    );
+    const users = usersSnap.map((s) => {
       const d = s.data() || {};
-      return { uid: s.id, username: d.username || "", displayName: d.displayName || "", photoURL: d.photoURL || "" };
+      return {
+        uid: s.id,
+        username: d.username || "",
+        displayName: d.displayName || "",
+        photoURL: d.photoURL || "",
+      };
     });
     return res.json({ ok: true, users });
   } catch (err) {
@@ -340,39 +538,54 @@ router.get("/following", verifyFirebaseToken, async (req, res) => {
 router.post("/sendShare", verifyFirebaseToken, async (req, res) => {
   try {
     const { postId, recipients } = req.body;
-    if (!postId || !Array.isArray(recipients)) return res.status(400).json({ error: "invalid payload" });
+    if (!postId || !Array.isArray(recipients))
+      return res.status(400).json({ error: "invalid payload" });
 
     const uid = req.user.uid;
-    const sanitizedRecipients = recipients.map(sanitizeString).filter(r => r && r !== uid);
-    if (!sanitizedRecipients.length) return res.status(400).json({ error: "no recipients" });
+    const sanitizedRecipients = recipients
+      .map(sanitizeString)
+      .filter((r) => r && r !== uid);
+    if (!sanitizedRecipients.length)
+      return res.status(400).json({ error: "no recipients" });
 
     const allowed = [];
     const chunkSize = 10;
     for (let i = 0; i < sanitizedRecipients.length; i += chunkSize) {
       const chunk = sanitizedRecipients.slice(i, i + chunkSize);
-      const snap = await db.collection("follows").where("followerUid", "==", uid).where("followingUid", "in", chunk).get();
-      snap.docs.forEach(d => {
+      const snap = await db
+        .collection("follows")
+        .where("followerUid", "==", uid)
+        .where("followingUid", "in", chunk)
+        .get();
+      snap.docs.forEach((d) => {
         const data = d.data();
         if (data && data.followingUid) allowed.push(data.followingUid);
       });
     }
-    if (!allowed.length) return res.status(400).json({ error: "recipients not allowed" });
+    if (!allowed.length)
+      return res.status(400).json({ error: "recipients not allowed" });
 
     const batch = db.batch();
     const collectionName = "globalFeeds";
     const targetRef = db.collection(collectionName).doc(postId);
-    batch.update(targetRef, { "stats.shares": admin.firestore.FieldValue.increment(allowed.length) });
+    batch.update(targetRef, {
+      "stats.shares": admin.firestore.FieldValue.increment(allowed.length),
+    });
     const baseUrl = process.env.APP_URL || "https://yourapp.com";
     const shareLink = `${baseUrl}/feelings/${postId}`;
-    allowed.forEach(recipientUid => {
-      const notifRef = db.collection("users").doc(recipientUid).collection("notifications").doc();
+    allowed.forEach((recipientUid) => {
+      const notifRef = db
+        .collection("users")
+        .doc(recipientUid)
+        .collection("notifications")
+        .doc();
       batch.set(notifRef, {
         fromUid: uid,
         type: "share",
         postId,
         link: shareLink,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
-        read: false
+        read: false,
       });
     });
     await batch.commit();
@@ -439,11 +652,11 @@ router.get("/posts/feed", verifyFirebaseToken, async (req, res) => {
     ]);
 
     // 2. Kullanıcının beğendiği ve kaydettiği post ID'lerini bir Set'e al
-    const likedPostIds = new Set(likedSnap.docs.map(doc => doc.id));
-    const savedPostIds = new Set(savedSnap.docs.map(doc => doc.id));
+    const likedPostIds = new Set(likedSnap.docs.map((doc) => doc.id));
+    const savedPostIds = new Set(savedSnap.docs.map((doc) => doc.id));
 
     // 3. Post verilerini birleştir ve formatla
-    const posts = postsSnap.docs.map(doc => {
+    const posts = postsSnap.docs.map((doc) => {
       const postId = doc.id;
       return {
         id: postId,
