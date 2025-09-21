@@ -45,6 +45,12 @@ router.patch(
   postController.disableComments
 );
 
+// ✅ Yeni: Yorumları açma rotası
+router.patch(
+  "/:postId/enable-comments",
+  isAuthenticated,
+  postController.enableComments
+);
 
 // ✅ Yeni: Gönderi raporlama rotası (herkes raporlayabilir)
 // Not: `reportController.createReport` fonksiyonunu kullanır.

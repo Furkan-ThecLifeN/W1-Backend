@@ -150,3 +150,31 @@ exports.disableComments = async (req, res) => {
     return res.status(500).json({ error: "Yorumlar kapatılamadı.", details: e.message });
   }
 };
+
+// Yorumları açma 
+exports.enableComments = async (req, res) => {
+  const { postId } = req.params;
+  const uid = req.user.uid;
+
+  try {
+    const postRef = db.collection("users").doc(uid).collection("posts").doc(postId);
+    const postSnap = await postRef.get();
+
+    if (!postSnap.exists) {
+      return res.status(404).json({ error: "Gönderi bulunamadı." });
+    }
+    if (postSnap.data().uid !== uid) {
+      return res.status(403).json({ error: "Yetkiniz yok." });
+    }
+
+    await postRef.update({ commentsDisabled: false });
+
+    const globalPostRef = db.collection("globalPosts").doc(postId);
+    await globalPostRef.update({ commentsDisabled: false });
+
+    return res.status(200).json({ message: "Yorumlar başarıyla açıldı." });
+  } catch (e) {
+    console.error("Yorumları açma hatası:", e);
+    return res.status(500).json({ error: "Yorumlar açılamadı.", details: e.message });
+  }
+};
