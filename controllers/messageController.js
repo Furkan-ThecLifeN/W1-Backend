@@ -28,9 +28,11 @@ const uploadToImgbb = async (filePath) => {
         headers: formData.getHeaders(),
       }
     );
-    return response.data.data.url;
+
+    // Burada display_url döndürüyoruz
+    return response.data.data.display_url;
   } catch (error) {
-    console.error("Imgbb'ye yükleme hatası:", error);
+    console.error("Imgbb'ye yükleme hatası:", error.response?.data || error.message);
     return null;
   }
 };

@@ -572,7 +572,7 @@ router.post("/sendShare", verifyFirebaseToken, async (req, res) => {
       "stats.shares": admin.firestore.FieldValue.increment(allowed.length),
     });
     const baseUrl = process.env.APP_URL || "https://yourapp.com";
-    const shareLink = `${baseUrl}/feelings/${postId}`;
+    const shareLink = `${baseUrl}/post/${postId}`;
     allowed.forEach((recipientUid) => {
       const notifRef = db
         .collection("users")
