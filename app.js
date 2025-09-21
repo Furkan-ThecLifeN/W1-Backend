@@ -19,6 +19,8 @@ const feedsRoutes = require("./routes/feedsRoutes");
 const feelingsRoutes = require("./routes/feelingsRoutes");
 const postRoutes = require("./routes/postRoutes");
 const actionsBtnRoutes = require("./routes/actionsBtnRoutes");
+const reportRoutes = require("./routes/reportRoutes");
+
 const { batchActionsController } = require("./routes/batchActions");
 
 
@@ -73,6 +75,7 @@ app.use("/api/feeds", feedsRoutes);
 app.use("/api/feelings", feelingsRoutes);
 app.use("/api/posts", postRoutes);
 app.use("/api/actions", actionsBtnRoutes); 
+app.use("/api/reports", reportRoutes);
 
 // ✅ Batch endpoint ayrıca bağla
 app.post("/api/actions/batch", verifyFirebaseToken, batchActionsController);

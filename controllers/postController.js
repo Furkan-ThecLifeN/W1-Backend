@@ -12,7 +12,7 @@ exports.sharePost = async (req, res) => {
 
   const { caption, privacy, imageUrls: bodyImageUrls } = req.body;
   const uid = req.user.uid;
-  
+
   // Frontend'den gelen veya multer ile yüklenen görselleri birleştirir.
   let imageUrls = [];
   if (Array.isArray(bodyImageUrls)) {
@@ -51,6 +51,7 @@ exports.sharePost = async (req, res) => {
         comments: 0,
         shares: 0,
       },
+      commentsDisabled: false, // Yorumlar ilk başta açık olur
     };
 
     // Yeni gönderi için benzersiz ID oluşturur ve bu ID'yi her iki koleksiyon için de kullanır.
@@ -59,7 +60,7 @@ exports.sharePost = async (req, res) => {
 
     // Batch işlemi başlatılır.
     const batch = db.batch();
-    
+
     // Kullanıcının özel koleksiyonuna ve global koleksiyona aynı veriyi kaydeder.
     batch.set(newPostRef, postData);
     if (privacy === "public") {
@@ -79,5 +80,73 @@ exports.sharePost = async (req, res) => {
       error: "Sunucu hatası: Post paylaşılamadı.",
       details: error.message,
     });
+  }
+};
+
+/**
+ * Gönderiyi hem kullanıcının kişisel koleksiyonundan hem de genel akıştan siler.
+ * Sadece gönderi sahibi tarafından kullanılabilir.
+ */
+exports.deletePost = async (req, res) => {
+  const { postId } = req.params;
+  const uid = req.user.uid;
+
+  try {
+    const userPostRef = db.collection("users").doc(uid).collection("posts").doc(postId);
+    const postSnap = await userPostRef.get();
+
+    if (!postSnap.exists) {
+      return res.status(404).json({ error: "Gönderi bulunamadı." });
+    }
+    // Güvenlik kontrolü: Gönderinin sahibinin silme yetkisi olduğunu doğrular.
+    if (postSnap.data().uid !== uid) {
+      return res.status(403).json({ error: "Yetkiniz yok." });
+    }
+
+    const globalPostRef = db.collection("globalPosts").doc(postId);
+
+    const batch = db.batch();
+    batch.delete(userPostRef);
+    batch.delete(globalPostRef);
+
+    await batch.commit();
+    return res.status(200).json({ message: "Gönderi başarıyla silindi." });
+  } catch (e) {
+    console.error("Gönderi silme hatası:", e);
+    return res.status(500).json({ error: "Gönderi silinemedi.", details: e.message });
+  }
+};
+
+/**
+ * Gönderide yorum yapma özelliğini kapatır.
+ * Sadece gönderi sahibi tarafından kullanılabilir.
+ */
+exports.disableComments = async (req, res) => {
+  const { postId } = req.params;
+  const uid = req.user.uid;
+
+  try {
+    const postRef = db.collection("users").doc(uid).collection("posts").doc(postId);
+    const postSnap = await postRef.get();
+
+    if (!postSnap.exists) {
+      return res.status(404).json({ error: "Gönderi bulunamadı." });
+    }
+    // Güvenlik kontrolü: Gönderinin sahibinin yorumları kapatma yetkisi olduğunu doğrular.
+    if (postSnap.data().uid !== uid) {
+      return res.status(403).json({ error: "Yetkiniz yok." });
+    }
+
+    // Firestore'da `commentsDisabled` flag'ini `true` olarak günceller.
+    await postRef.update({ commentsDisabled: true });
+
+    // Global akışta da aynı güncellemeyi yapar, böylece herkes için geçerli olur.
+    const globalPostRef = db.collection("globalPosts").doc(postId);
+    await globalPostRef.update({ commentsDisabled: true });
+    
+    return res.status(200).json({ message: "Yorumlar başarıyla kapatıldı." });
+  } catch (e) {
+    console.error("Yorumları kapatma hatası:", e);
+    return res.status(500).json({ error: "Yorumlar kapatılamadı.", details: e.message });
   }
 };
