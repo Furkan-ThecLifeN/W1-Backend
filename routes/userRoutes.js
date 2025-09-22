@@ -1,3 +1,4 @@
+// userRoutes.js
 const express = require("express");
 const router = express.Router();
 const verifyToken = require("../middlewares/verifyToken");
@@ -27,7 +28,6 @@ const {
   getFollowers,
   getFollowing,
   getPendingRequests,
-  // ✅ YENİ EKLENDİ
   removeFollower,
   removeFollowing,
 } = require("../controllers/userController");
@@ -51,7 +51,8 @@ const highFrequencyLimiter = rateLimit({
 });
 
 // Profil ve Hesap Ayarları
-router.get("/profile/:username", standardApiLimiter, getProfileByUsername); 
+router.patch("/profile/update", verifyToken, standardApiLimiter, updateProfile);
+router.get("/profile/:username", standardApiLimiter, getProfileByUsername);
 router.get("/profile/:targetUid/status", verifyToken, standardApiLimiter, getFollowStatus);
 
 // Cihaz Yönetimi
@@ -73,14 +74,13 @@ router.get("/notifications", verifyToken, standardApiLimiter, getNotifications);
 // Takip İşlemleri
 router.post("/follow", verifyToken, highFrequencyLimiter, followUser);
 router.delete("/unfollow/:targetUid", verifyToken, highFrequencyLimiter, unfollowUser);
-router.delete("/follow/request/retract", verifyToken, highFrequencyLimiter, retractFollowRequest);
+// BU SATIR DÜZELTİLDİ: targetUid parametresi eklendi
+router.delete("/follow/request/retract/:targetUid", verifyToken, highFrequencyLimiter, retractFollowRequest);
 router.post("/follow/accept/:requesterUid", verifyToken, highFrequencyLimiter, acceptFollowRequest);
 router.post("/follow/reject/:requesterUid", verifyToken, highFrequencyLimiter, rejectFollowRequest);
 router.get("/:targetUid/followers", verifyToken, standardApiLimiter, getFollowers);
 router.get("/:targetUid/following", verifyToken, standardApiLimiter, getFollowing);
 router.get("/requests/pending", verifyToken, standardApiLimiter, getPendingRequests);
-
-// ✅ YENİ: Kullanıcı listelerinden çıkarma
 router.delete("/remove-follower/:followerUid", verifyToken, highFrequencyLimiter, removeFollower);
 router.delete("/remove-following/:followingUid", verifyToken, highFrequencyLimiter, removeFollowing);
 
