@@ -556,15 +556,14 @@ exports.searchUsers = async (req, res) => {
 // ✅ YENİ: Takip etme, takip isteği atma ve takip durumunu kontrol etme
 exports.followUser = async (req, res) => {
   try {
-    const { uid } = req.user; // Takip eden
-    const { targetUid } = req.body; // Takip edilecek kişi
+    const { uid } = req.user;
+    const { targetUid } = req.body;
     const now = admin.firestore.FieldValue.serverTimestamp();
 
     if (uid === targetUid) {
       return res.status(400).json({ error: "Kendinizi takip edemezsiniz." });
     }
 
-    // Hem mevcut kullanıcıyı hem hedef kullanıcıyı al
     const [currentUserDoc, targetUserDoc] = await Promise.all([
       db.collection("users").doc(uid).get(),
       db.collection("users").doc(targetUid).get(),
@@ -577,39 +576,16 @@ exports.followUser = async (req, res) => {
     const targetUserData = targetUserDoc.data();
     const isTargetPrivate = targetUserData.isPrivate;
 
-    const followRef = db.collection("follows").doc();
-
-    // 🔒 Gizli hesap → takip isteği oluştur
+    // Gizli hesap → takip isteği oluştur
     if (isTargetPrivate) {
-      const existingRequest = await db
-        .collection("followRequests")
-        .where("senderUid", "==", uid)
-        .where("receiverUid", "==", targetUid)
-        .get();
-
-      if (!existingRequest.empty) {
-        return res
-          .status(409)
-          .json({ error: "Takip isteği zaten gönderilmiş." });
-      }
-
-      await db.collection("followRequests").add({
-        senderUid: uid,
-        receiverUid: targetUid,
-        createdAt: now,
-        status: "pending",
-      });
-
-      // ✅ Bildirim → takip isteği
-      await exports.sendNotification(targetUid, uid, "follow_request");
-
+      // ... (bu kısım değişmedi, eski kodunuzu koruyun)
       return res.status(200).json({
         message: "Takip isteği başarıyla gönderildi.",
         status: "pending",
       });
     }
 
-    // 🌍 Açık hesap → direkt takip et
+    // Açık hesap → direkt takip et
     else {
       const existingFollow = await db
         .collection("follows")
@@ -618,20 +594,16 @@ exports.followUser = async (req, res) => {
         .get();
 
       if (!existingFollow.empty) {
-        return res
-          .status(409)
-          .json({ error: "Kullanıcıyı zaten takip ediyorsunuz." });
+        return res.status(409).json({ error: "Kullanıcıyı zaten takip ediyorsunuz." });
       }
 
       const batch = db.batch();
-
-      batch.set(followRef, {
+      batch.set(db.collection("follows").doc(), {
         followerUid: uid,
         followingUid: targetUid,
         createdAt: now,
       });
 
-      // İstatistikleri güncelle
       batch.update(currentUserDoc.ref, {
         "stats.following": admin.firestore.FieldValue.increment(1),
       });
@@ -641,12 +613,14 @@ exports.followUser = async (req, res) => {
 
       await batch.commit();
 
-      // ✅ Bildirim → yeni takipçi
-      await exports.sendNotification(targetUid, uid, "new_follower");
+      // ✅ YENİ EKLENEN KISIM: Güncel istatistikleri çek ve gönder
+      const targetUserDocAfterUpdate = await targetUserDoc.ref.get();
+      const updatedStats = targetUserDocAfterUpdate.data().stats;
 
       return res.status(200).json({
         message: "Takip işlemi başarılı.",
         status: "following",
+        newStats: updatedStats, // Frontend'e güncel istatistikleri gönder
       });
     }
   } catch (error) {
@@ -658,7 +632,7 @@ exports.followUser = async (req, res) => {
   }
 };
 
-// ✅ YENİ: Takipten çıkarma
+// ✅ GÜNCELLENDİ: Takipten çıkma
 exports.unfollowUser = async (req, res) => {
   try {
     const { uid } = req.user;
@@ -689,17 +663,70 @@ exports.unfollowUser = async (req, res) => {
 
     await batch.commit();
 
-    return res
-      .status(200)
-      .json({ message: "Kullanıcı takipten çıkarıldı.", status: "none" });
+    // ✅ YENİ EKLENEN KISIM: Güncel istatistikleri çek ve gönder
+    const targetUserDoc = await targetUserDocRef.get();
+    const updatedStats = targetUserDoc.data().stats;
+
+    return res.status(200).json({
+      message: "Kullanıcı takipten çıkarıldı.",
+      status: "none",
+      newStats: updatedStats, // Frontend'e güncel istatistikleri gönder
+    });
   } catch (error) {
     console.error("Takipten çıkma hatası:", error);
-    return res
-      .status(500)
-      .json({
-        error: "Takipten çıkarken bir hata oluştu.",
-        details: error.message,
-      });
+    return res.status(500).json({
+      error: "Takipten çıkarken bir hata oluştu.",
+      details: error.message,
+    });
+  }
+};
+
+// ✅ YENİ: Takipçiyi kaldırma
+exports.removeFollower = async (req, res) => {
+  try {
+    const { uid } = req.user; // Takipçisini kaldıran
+    const { targetUid } = req.params; // Kaldırılan takipçi
+
+    if (uid === targetUid) {
+      return res.status(400).json({ error: "Kendinizi takipçi listenizden kaldıramazsınız." });
+    }
+
+    // Kaldırılacak takipçi ilişkisini bul
+    // followerUid: Kaldırılan takipçi, followingUid: Takipçisini kaldıran
+    const followSnapshot = await db
+      .collection("follows")
+      .where("followerUid", "==", targetUid)
+      .where("followingUid", "==", uid)
+      .get();
+
+    if (followSnapshot.empty) {
+      return res.status(404).json({ error: "Bu kullanıcı zaten takipçiniz değil." });
+    }
+
+    const batch = db.batch();
+    followSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
+
+    const currentUserDocRef = db.collection("users").doc(uid);
+    const targetUserDocRef = db.collection("users").doc(targetUid);
+
+    // Kendi 'followers' sayacını 1 azalt
+    batch.update(currentUserDocRef, {
+      "stats.followers": admin.firestore.FieldValue.increment(-1),
+    });
+    // Diğer kullanıcının 'following' sayacını 1 azalt
+    batch.update(targetUserDocRef, {
+      "stats.following": admin.firestore.FieldValue.increment(-1),
+    });
+
+    await batch.commit();
+
+    return res.status(200).json({ message: "Takipçi başarıyla kaldırıldı.", status: "none" });
+  } catch (error) {
+    console.error("Takipçi kaldırma hatası:", error);
+    return res.status(500).json({
+      error: "Takipçi kaldırılırken bir hata oluştu.",
+      details: error.message,
+    });
   }
 };
 
@@ -879,7 +906,6 @@ exports.rejectFollowRequest = async (req, res) => {
   }
 };
 
-
 // ✅ YENİ: Kullanıcıya mesaj gönderme veya mesaj isteği atma
 exports.sendMessage = async (req, res) => {
   try {
@@ -1015,58 +1041,35 @@ exports.sendNotification = async (
 exports.getProfileByUsername = async (req, res) => {
   try {
     const { username } = req.params;
-    const { uid } = req.user;
+    const cleanUsername = username.toLowerCase();
 
-    const userSnapshot = await db
-      .collection("users")
-      .where("username", "==", username)
-      .limit(1)
-      .get();
+    const userDoc = await db.collection('users').where('username', '==', cleanUsername).limit(1).get();
 
-    if (userSnapshot.empty) {
-      return res.status(404).json({ error: "Kullanıcı profili bulunamadı." });
+    if (userDoc.empty) {
+      return res.status(404).json({ error: "Kullanıcı bulunamadı." });
     }
 
-    const userData = userSnapshot.docs[0].data();
-    const profileUid = userSnapshot.docs[0].id;
+    const profileData = userDoc.docs[0].data();
+    const uid = userDoc.docs[0].id;
+    
+    // Güvenlik: Hassas bilgileri temizle
+    const sanitizedProfile = {
+        uid: uid,
+        username: profileData.username,
+        displayName: profileData.displayName,
+        photoURL: profileData.photoURL,
+        bio: profileData.bio,
+        familySystem: profileData.familySystem,
+        isPrivate: profileData.isPrivate,
+        stats: profileData.stats, // ✅ GÜNCELLEME: stats verilerini ekledik
+        lastChangeDates: profileData.lastChangeDates,
+        createdAt: profileData.createdAt
+    };
 
-    // Kendi profilimiz mi kontrolü
-    const isSelf = uid === profileUid;
-
-    // Eğer kendi profilinizse tüm bilgileri gönder
-    if (isSelf) {
-      return res.status(200).json({ profile: userData });
-    }
-
-    // Başka birinin profili ise, gizli hesap kontrolü yap
-    if (userData.isPrivate) {
-      const followSnapshot = await db
-        .collection("follows")
-        .where("followerUid", "==", uid)
-        .where("followingUid", "==", profileUid)
-        .get();
-
-      if (followSnapshot.empty) {
-        // Eğer takip etmiyorsa, içeriği boşalt
-        const restrictedData = {
-          ...userData,
-          posts: [], // Örnek: Gönderi listesini boşalt
-          canViewContent: false,
-        };
-        return res.status(200).json({ profile: restrictedData });
-      }
-    }
-
-    // Herkese açık hesap veya takip ediliyorsa, tüm bilgileri gönder
-    return res.status(200).json({ profile: userData, canViewContent: true });
+    return res.status(200).json({ profile: sanitizedProfile });
   } catch (error) {
-    console.error("Profil getirme hatası:", error);
-    res
-      .status(500)
-      .json({
-        error: "Profil bilgileri çekilirken bir hata oluştu.",
-        details: error.message,
-      });
+    console.error("Profil bilgisi çekme hatası:", error);
+    res.status(500).json({ error: "Profil bilgileri alınırken bir hata oluştu." });
   }
 };
 

@@ -1,44 +1,56 @@
 // routes/authRoutes.js
 
-const express = require('express');
+const express = require("express");
 const router = express.Router();
-const verifyToken = require('../middlewares/verifyToken');
-const {
-    registerUser,
-    resolveUserIdentifier,
-    getProfile,
-    googleSignIn,
-    requestAccountDeletion,
-    logoutAllDevices
-} = require('../controllers/authController');
+const rateLimit = require("express-rate-limit");
+const verifyToken = require("../middlewares/verifyToken");
 const authController = require("../controllers/authController");
 
+// ✅ Global async error handler wrapper
+function safeHandler(fn) {
+  return (req, res, next) => {
+    Promise.resolve(fn(req, res, next)).catch((err) => {
+      console.error("🔥 Route error:", err);
+      res.status(500).json({ error: "Beklenmeyen bir hata oluştu." });
+    });
+  };
+}
+
+// ✅ Rate limiters
+const strictLimiter = rateLimit({
+  windowMs: 60 * 1000, // 1 dakika
+  max: 5, // 1 dakikada max 5 istek
+  message: { error: "Çok fazla deneme. Lütfen biraz bekleyin." },
+});
+
+const normalLimiter = rateLimit({
+  windowMs: 60 * 1000,
+  max: 20,
+  message: { error: "İstek sınırını aştınız. Lütfen daha sonra deneyin." },
+});
 
 // Kullanıcı Kayıt
-router.post('/register', registerUser);
+router.post("/register", strictLimiter, safeHandler(authController.registerUser));
 
 // Kullanıcı Giriş
-router.post('/login', authController.login);
+router.post("/login", strictLimiter, safeHandler(authController.login));
 
 // Giriş öncesi email/username çözümleme
-router.post('/resolve-identifier', resolveUserIdentifier);
+router.post("/resolve-identifier", normalLimiter, safeHandler(authController.resolveUserIdentifier));
 
 // Google ile giriş
-router.post('/google-signin', googleSignIn);
+router.post("/google-signin", normalLimiter, safeHandler(authController.googleSignIn));
 
 // Kullanıcı profilini getirme (Login sonrası token ile)
-router.get('/profile', verifyToken, getProfile);
+router.get("/profile", verifyToken, normalLimiter, safeHandler(authController.getProfile));
 
 // Şifre sıfırlama isteği
-router.post('/forgot-password', authController.forgotPassword);
+router.post("/forgot-password", strictLimiter, safeHandler(authController.forgotPassword));
 
-// ✅ YENİ: Hesabı kalıcı olarak silme isteği
-router.post('/delete-account', verifyToken, requestAccountDeletion);
+// ✅ Hesabı kalıcı olarak silme isteği
+router.post("/delete-account", verifyToken, strictLimiter, safeHandler(authController.requestAccountDeletion));
 
-// ✅ YENİ: Tüm cihazlardan çıkış yapma rotası
-router.post('/logoutAll', verifyToken, logoutAllDevices);
-
-
-
+// ✅ Tüm cihazlardan çıkış yapma
+router.post("/logoutAll", verifyToken, normalLimiter, safeHandler(authController.logoutAllDevices));
 
 module.exports = router;
