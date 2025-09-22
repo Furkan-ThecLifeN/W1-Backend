@@ -1,5 +1,3 @@
-// userRoutes.js
-
 const express = require("express");
 const router = express.Router();
 const verifyToken = require("../middlewares/verifyToken");
@@ -29,6 +27,9 @@ const {
   getFollowers,
   getFollowing,
   getPendingRequests,
+  // ✅ YENİ EKLENDİ
+  removeFollower,
+  removeFollowing,
 } = require("../controllers/userController");
 
 // GENEL API İÇİN ORTA DÜZEY RATE LIMITER
@@ -50,10 +51,7 @@ const highFrequencyLimiter = rateLimit({
 });
 
 // Profil ve Hesap Ayarları
-// Public endpoint: Herkesin profilin temel bilgilerini görebilmesi için 'verifyToken' kaldırıldı.
 router.get("/profile/:username", standardApiLimiter, getProfileByUsername); 
-
-// Takip durumu ve istatistikleri için kimlik doğrulaması gerektiren endpoint.
 router.get("/profile/:targetUid/status", verifyToken, standardApiLimiter, getFollowStatus);
 
 // Cihaz Yönetimi
@@ -81,6 +79,10 @@ router.post("/follow/reject/:requesterUid", verifyToken, highFrequencyLimiter, r
 router.get("/:targetUid/followers", verifyToken, standardApiLimiter, getFollowers);
 router.get("/:targetUid/following", verifyToken, standardApiLimiter, getFollowing);
 router.get("/requests/pending", verifyToken, standardApiLimiter, getPendingRequests);
+
+// ✅ YENİ: Kullanıcı listelerinden çıkarma
+router.delete("/remove-follower/:followerUid", verifyToken, highFrequencyLimiter, removeFollower);
+router.delete("/remove-following/:followingUid", verifyToken, highFrequencyLimiter, removeFollowing);
 
 // Mesajlaşma
 router.post("/message", verifyToken, highFrequencyLimiter, sendMessage);

@@ -681,52 +681,87 @@ exports.unfollowUser = async (req, res) => {
   }
 };
 
-// ✅ YENİ: Takipçiyi kaldırma
+// ✅ YENİ: Takipçiyi Kaldırma
 exports.removeFollower = async (req, res) => {
   try {
-    const { uid } = req.user; // Takipçisini kaldıran
-    const { targetUid } = req.params; // Kaldırılan takipçi
+    const { uid } = req.user;
+    const { followerUid } = req.params;
 
-    if (uid === targetUid) {
-      return res.status(400).json({ error: "Kendinizi takipçi listenizden kaldıramazsınız." });
-    }
+    // Sadece kendi hesabınızdan takipçi kaldırabilirsiniz
+    const userDocRef = db.collection("users").doc(uid);
+    const followerDocRef = db.collection("users").doc(followerUid);
 
-    // Kaldırılacak takipçi ilişkisini bul
-    // followerUid: Kaldırılan takipçi, followingUid: Takipçisini kaldıran
-    const followSnapshot = await db
+    const followerFollowsSnapshot = await db
       .collection("follows")
-      .where("followerUid", "==", targetUid)
+      .where("followerUid", "==", followerUid)
       .where("followingUid", "==", uid)
       .get();
 
-    if (followSnapshot.empty) {
-      return res.status(404).json({ error: "Bu kullanıcı zaten takipçiniz değil." });
+    if (followerFollowsSnapshot.empty) {
+      return res.status(404).json({ error: "Bu kullanıcı takipçiniz değil." });
     }
 
     const batch = db.batch();
-    followSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
+    followerFollowsSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
 
-    const currentUserDocRef = db.collection("users").doc(uid);
-    const targetUserDocRef = db.collection("users").doc(targetUid);
-
-    // Kendi 'followers' sayacını 1 azalt
-    batch.update(currentUserDocRef, {
+    batch.update(userDocRef, {
       "stats.followers": admin.firestore.FieldValue.increment(-1),
     });
-    // Diğer kullanıcının 'following' sayacını 1 azalt
-    batch.update(targetUserDocRef, {
+    batch.update(followerDocRef, {
       "stats.following": admin.firestore.FieldValue.increment(-1),
     });
 
     await batch.commit();
 
-    return res.status(200).json({ message: "Takipçi başarıyla kaldırıldı.", status: "none" });
+    return res.status(200).json({
+      message: "Takipçi başarıyla kaldırıldı.",
+      uid: followerUid,
+    });
   } catch (error) {
     console.error("Takipçi kaldırma hatası:", error);
-    return res.status(500).json({
-      error: "Takipçi kaldırılırken bir hata oluştu.",
-      details: error.message,
+    res.status(500).json({ error: "Takipçi kaldırılırken bir hata oluştu." });
+  }
+};
+
+// ✅ YENİ: Takip Edileni Kaldırma (Takipten Çıkma)
+exports.removeFollowing = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const { followingUid } = req.params;
+
+    // Sadece kendi takip ettiğiniz kişileri kaldırabilirsiniz
+    const userDocRef = db.collection("users").doc(uid);
+    const followingDocRef = db.collection("users").doc(followingUid);
+
+    const followsSnapshot = await db
+      .collection("follows")
+      .where("followerUid", "==", uid)
+      .where("followingUid", "==", followingUid)
+      .get();
+
+    if (followsSnapshot.empty) {
+      return res.status(404).json({ error: "Bu kullanıcıyı takip etmiyorsunuz." });
+    }
+
+    const batch = db.batch();
+    followsSnapshot.docs.forEach((doc) => batch.delete(doc.ref));
+
+    batch.update(userDocRef, {
+      "stats.following": admin.firestore.FieldValue.increment(-1),
     });
+    batch.update(followingDocRef, {
+      "stats.followers": admin.firestore.FieldValue.increment(-1),
+    });
+
+    await batch.commit();
+
+    return res.status(200).json({
+      message: "Kullanıcı takipten başarıyla çıkarıldı.",
+      uid: followingUid,
+    });
+  } catch (error) {
+    console.error("Takip edileni kaldırma hatası:", error);
+    res.status(500).json({ error: "Takip edilen kaldırılırken bir hata oluştu." });
   }
 };
 
