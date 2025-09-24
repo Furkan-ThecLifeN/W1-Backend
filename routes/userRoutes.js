@@ -2,7 +2,6 @@
 const express = require("express");
 const router = express.Router();
 const verifyToken = require("../middlewares/verifyToken");
-const rateLimit = require("express-rate-limit");
 
 const {
   updateProfile,
@@ -30,68 +29,47 @@ const {
   getPendingRequests,
   removeFollower,
   removeFollowing,
-  // ✅ YENİ EKLENEN FONKSİYON
   markNotificationsAsRead,
 } = require("../controllers/userController");
 
-// Genel API
-const standardApiLimiter = rateLimit({
-   windowMs: 1,   // 1 ms (önemsiz)
-  max: Infinity, // Sınırsız istek hakkı
-  standardHeaders: false,
-  legacyHeaders: false,
-  message: "",   // Boş mesaj
-});
-
-// Kritik işlemler (takip, mesaj vb.)
-const highFrequencyLimiter = rateLimit({
-   windowMs: 1,   // 1 ms (önemsiz)
-  max: Infinity, // Sınırsız istek hakkı
-  standardHeaders: false,
-  legacyHeaders: false,
-  message: "",   // Boş mesaj
-});
-
 // Profil ve Hesap Ayarları
-router.patch("/profile/update", verifyToken, standardApiLimiter, updateProfile);
-router.get("/profile/:username", standardApiLimiter, getProfileByUsername);
-router.get("/profile/:targetUid/status", verifyToken, standardApiLimiter, getFollowStatus);
+router.patch("/profile/update", verifyToken, updateProfile);
+router.get("/profile/:username", getProfileByUsername);
+router.get("/profile/:targetUid/status", verifyToken, getFollowStatus);
 
 // Cihaz Yönetimi
-router.post("/devices/save", verifyToken, standardApiLimiter, saveLoginDevice);
-router.get("/devices", verifyToken, standardApiLimiter, getLoginDevices);
+router.post("/devices/save", verifyToken, saveLoginDevice);
+router.get("/devices", verifyToken, getLoginDevices);
 
 // Gizlilik ve Ayarlar
-router.patch("/privacy", verifyToken, standardApiLimiter, updatePrivacySettings);
-router.get("/:id/privacy", standardApiLimiter, getPrivacySettings);
-router.patch("/privacy/messages", verifyToken, standardApiLimiter, updateMessagesPrivacy);
-router.patch("/privacy/storyReplies", verifyToken, standardApiLimiter, updateStoryRepliesPrivacy);
-router.patch("/settings/hide-likes", verifyToken, standardApiLimiter, updateHideLikesSetting);
+router.patch("/privacy", verifyToken, updatePrivacySettings);
+router.get("/:id/privacy", getPrivacySettings);
+router.patch("/privacy/messages", verifyToken, updateMessagesPrivacy);
+router.patch("/privacy/storyReplies", verifyToken, updateStoryRepliesPrivacy);
+router.patch("/settings/hide-likes", verifyToken, updateHideLikesSetting);
 
 // Bildirimler
-router.get("/notifications/settings", verifyToken, standardApiLimiter, getUserNotificationSettings);
-router.patch("/notifications/settings", verifyToken, standardApiLimiter, updateUserNotificationSettings);
-router.get("/notifications", verifyToken, standardApiLimiter, getNotifications);
-// ✅ YENİ EKLENEN ROTA: Bildirimleri okundu olarak işaretler
-router.patch("/notifications/read", verifyToken, standardApiLimiter, markNotificationsAsRead);
+router.get("/notifications/settings", verifyToken, getUserNotificationSettings);
+router.patch("/notifications/settings", verifyToken, updateUserNotificationSettings);
+router.get("/notifications", verifyToken, getNotifications);
+router.patch("/notifications/read", verifyToken, markNotificationsAsRead);
 
 // Takip İşlemleri
-router.post("/follow", verifyToken, highFrequencyLimiter, followUser);
-router.delete("/unfollow/:targetUid", verifyToken, highFrequencyLimiter, unfollowUser);
-// BU SATIR DÜZELTİLDİ: targetUid parametresi eklendi
-router.delete("/follow/request/retract/:targetUid", verifyToken, highFrequencyLimiter, retractFollowRequest);
-router.post("/follow/accept/:requesterUid", verifyToken, highFrequencyLimiter, acceptFollowRequest);
-router.post("/follow/reject/:requesterUid", verifyToken, highFrequencyLimiter, rejectFollowRequest);
-router.get("/:targetUid/followers", verifyToken, standardApiLimiter, getFollowers);
-router.get("/:targetUid/following", verifyToken, standardApiLimiter, getFollowing);
-router.get("/requests/pending", verifyToken, standardApiLimiter, getPendingRequests);
-router.delete("/remove-follower/:followerUid", verifyToken, highFrequencyLimiter, removeFollower);
-router.delete("/remove-following/:followingUid", verifyToken, highFrequencyLimiter, removeFollowing);
+router.post("/follow", verifyToken, followUser);
+router.delete("/unfollow/:targetUid", verifyToken, unfollowUser);
+router.delete("/follow/request/retract/:targetUid", verifyToken, retractFollowRequest);
+router.post("/follow/accept/:requesterUid", verifyToken, acceptFollowRequest);
+router.post("/follow/reject/:requesterUid", verifyToken, rejectFollowRequest);
+router.get("/:targetUid/followers", verifyToken, getFollowers);
+router.get("/:targetUid/following", verifyToken, getFollowing);
+router.get("/requests/pending", verifyToken, getPendingRequests);
+router.delete("/remove-follower/:followerUid", verifyToken, removeFollower);
+router.delete("/remove-following/:followingUid", verifyToken, removeFollowing);
 
 // Mesajlaşma
-router.post("/message", verifyToken, highFrequencyLimiter, sendMessage);
+router.post("/message", verifyToken, sendMessage);
 
 // Arama
-router.get("/search", verifyToken, highFrequencyLimiter, searchUsers);
+router.get("/search", verifyToken, searchUsers);
 
 module.exports = router;
