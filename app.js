@@ -4,7 +4,6 @@ require("dotenv").config();
 const express = require("express");
 const helmet = require("helmet");
 const cors = require("cors");
-const rateLimit = require("express-rate-limit");
 const requestIp = require("request-ip");
 const useragent = require("express-useragent");
 const path = require("path");
@@ -22,9 +21,6 @@ const actionsBtnRoutes = require("./routes/actionsBtnRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 
 const { batchActionsController } = require("./routes/batchActions");
-
-
-
 const { startDeletionJob } = require("./cronJob");
 
 const app = express();
@@ -60,13 +56,6 @@ app.use(
   })
 );
 
-const limiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  message: "Too many requests. Please try again after 15 minutes.",
-});
-app.use(limiter);
-
 // ✅ Route tanımlamaları
 app.use("/api/auth", authRoutes);
 app.use("/api/users", userRoutes);
@@ -79,7 +68,6 @@ app.use("/api/reports", reportRoutes);
 
 // ✅ Batch endpoint ayrıca bağla
 app.post("/api/actions/batch", verifyFirebaseToken, batchActionsController);
-
 
 app.use(express.static("public"));
 

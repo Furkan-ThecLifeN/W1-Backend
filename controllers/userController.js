@@ -6,6 +6,7 @@ const { getStorage } = require("firebase-admin/storage");
 const { FieldValue } = require("firebase-admin/firestore");
 const admin = require("firebase-admin");
 
+
 // Profil güncelleme
 exports.updateProfile = async (req, res) => {
   try {
@@ -435,7 +436,6 @@ exports.getUserNotificationSettings = async (req, res) => {
       return res.status(404).json({ error: "Kullanıcı bulunamadı." });
     }
 
-    // Varsayılan ayarları tanımla
     const defaultSettings = {
       email: true,
       push: false,
@@ -445,15 +445,11 @@ exports.getUserNotificationSettings = async (req, res) => {
       messages: true,
     };
 
-    // Mevcut ayarları al veya varsayılanları kullan
     const settings = userDoc.data().notificationSettings || defaultSettings;
-
     return res.status(200).json({ settings });
   } catch (error) {
     console.error("Bildirim ayarlarını getirme hatası:", error);
-    return res
-      .status(500)
-      .json({ error: "Bildirim ayarları alınırken bir hata oluştu." });
+    return res.status(500).json({ error: "Bildirim ayarları alınırken bir hata oluştu." });
   }
 };
 
@@ -484,29 +480,19 @@ exports.updateUserNotificationSettings = async (req, res) => {
       ...updates,
     };
 
-    // Güncellemeyi Firestore'a yaz
     await userDocRef.update({
       notificationSettings: newSettings,
-      "lastChangeDates.notificationSettings":
-        admin.firestore.FieldValue.serverTimestamp(),
+      "lastChangeDates.notificationSettings": admin.firestore.FieldValue.serverTimestamp(),
     });
 
-    // Profesyonel Ekstra: Loglama
-    console.log(
-      `Bildirim ayarları güncellendi. Kullanıcı ID: ${uid}, Değişiklikler: ${JSON.stringify(
-        updates
-      )}`
-    );
-
+    console.log(`Bildirim ayarları güncellendi. Kullanıcı ID: ${uid}, Değişiklikler: ${JSON.stringify(updates)}`);
     return res.status(200).json({
       message: "Bildirim ayarları başarıyla güncellendi.",
       settings: newSettings,
     });
   } catch (error) {
     console.error("Bildirim ayarlarını güncelleme hatası:", error);
-    return res
-      .status(500)
-      .json({ error: "Bildirim ayarları güncellenirken bir hata oluştu." });
+    return res.status(500).json({ error: "Bildirim ayarları güncellenirken bir hata oluştu." });
   }
 };
 
@@ -553,7 +539,7 @@ exports.searchUsers = async (req, res) => {
   }
 };
 
-// ✅ YENİ: Takip etme, takip isteği atma ve takip durumunu kontrol etme
+// ✅ GÜNCELLENDİ: Takip etme, takip isteği atma ve takip durumunu kontrol etme
 exports.followUser = async (req, res) => {
   try {
     const { uid } = req.user;
@@ -576,9 +562,7 @@ exports.followUser = async (req, res) => {
     const targetUserData = targetUserDoc.data();
     const isTargetPrivate = targetUserData.isPrivate;
 
-    // Gizli hesap → takip isteği oluştur
     if (isTargetPrivate) {
-      // Takip isteği zaten var mı kontrol
       const existingRequest = await db.collection("follows")
         .where("followerUid", "==", uid)
         .where("followingUid", "==", targetUid)
@@ -595,8 +579,8 @@ exports.followUser = async (req, res) => {
         createdAt: now,
       });
 
-      // 🔔 Bildirim ekle
-      await db.collection("notifications").doc().set({
+      // 🔔 Bildirim ekle - Düzeltildi: Artık doğru alt koleksiyona yazıyor
+      await db.collection("users").doc(targetUid).collection("notifications").add({
         fromUid: uid,
         toUid: targetUid,
         type: "follow_request",
@@ -610,7 +594,6 @@ exports.followUser = async (req, res) => {
       });
     }
 
-    // Açık hesap → direkt takip et
     const existingFollow = await db
       .collection("follows")
       .where("followerUid", "==", uid)
@@ -636,8 +619,8 @@ exports.followUser = async (req, res) => {
       "stats.followers": admin.firestore.FieldValue.increment(1),
     });
 
-    // 🔔 Bildirim ekle (açık hesapta direkt takip)
-    batch.set(db.collection("notifications").doc(), {
+    // 🔔 Bildirim ekle - Düzeltildi: Artık doğru alt koleksiyona yazıyor
+    batch.set(db.collection("users").doc(targetUid).collection("notifications").doc(), {
       fromUid: uid,
       toUid: targetUid,
       type: "new_follower",
@@ -655,7 +638,6 @@ exports.followUser = async (req, res) => {
       status: "following",
       newStats: updatedStats,
     });
-
   } catch (error) {
     console.error("Takip işlemi hatası:", error);
     return res.status(500).json({
@@ -1177,33 +1159,52 @@ exports.getFollowStatus = async (req, res) => {
   }
 };
 
-// ✅ YENİ: Bildirimleri getirme fonksiyonu
+// ✅ YENİLENEN FONKSİYON: Bildirimleri kullanıcının alt koleksiyonundan getirme
 exports.getNotifications = async (req, res) => {
   try {
-    const userId = req.user.uid; // Oturum açmış kullanıcının UID'si
-
-    // Kullanıcının UID'sine göre Firestore'daki bildirimleri sorgula
-    const notificationsSnapshot = await db.collection("notifications")
-      .where("toUid", "==", userId) // Sadece mevcut kullanıcıya gönderilen bildirimleri al
-      .orderBy("createdAt", "desc") // En yeni bildirimleri en üstte göster
+    const { uid } = req.user;
+    const notificationsSnapshot = await db
+      .collection("users")
+      .doc(uid)
+      .collection("notifications")
+      .orderBy("createdAt", "desc")
+      .limit(50)
       .get();
-    
-    // Belgeleri döngüye alarak bir diziye dönüştür
-    const notifications = notificationsSnapshot.docs.map(doc => {
-      const data = doc.data();
-      // Firestore Timestamp objesini JSON serileştirme için bir stringe dönüştürün
-      const createdAt = data.createdAt ? data.createdAt.toDate().toISOString() : new Date().toISOString();
-      return {
-        id: doc.id,
-        ...data,
-        createdAt,
-      };
+
+    const notifications = notificationsSnapshot.docs.map((doc) => ({
+      id: doc.id,
+      ...doc.data(),
+      createdAt: doc.data().createdAt.toDate().toISOString(),
+    }));
+
+    return res.status(200).json({ notifications });
+  } catch (error) {
+    console.error("Bildirimleri getirme hatası:", error);
+    return res.status(500).json({ error: "Bildirimler getirilirken bir hata oluştu." });
+  }
+};
+
+// 💡 Yeni fonksiyon: Bildirimleri okundu olarak işaretleme
+exports.markNotificationsAsRead = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const batch = db.batch();
+    const notificationsSnapshot = await db
+      .collection("users")
+      .doc(uid)
+      .collection("notifications")
+      .where("isRead", "==", false)
+      .get();
+
+    notificationsSnapshot.docs.forEach((doc) => {
+      batch.update(doc.ref, { isRead: true });
     });
 
-    res.status(200).json({ notifications });
+    await batch.commit();
+    return res.status(200).json({ message: "Tüm bildirimler okundu olarak işaretlendi." });
   } catch (error) {
-    console.error("Bildirimleri getirirken hata oluştu:", error);
-    res.status(500).json({ error: "Bildirimler yüklenemedi." });
+    console.error("Bildirimleri okundu olarak işaretleme hatası:", error);
+    return res.status(500).json({ error: "İşlem sırasında bir hata oluştu." });
   }
 };
 

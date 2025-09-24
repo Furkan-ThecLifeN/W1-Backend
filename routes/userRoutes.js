@@ -30,24 +30,26 @@ const {
   getPendingRequests,
   removeFollower,
   removeFollowing,
+  // ✅ YENİ EKLENEN FONKSİYON
+  markNotificationsAsRead,
 } = require("../controllers/userController");
 
-// GENEL API İÇİN ORTA DÜZEY RATE LIMITER
+// Genel API
 const standardApiLimiter = rateLimit({
-  windowMs: 15 * 60 * 1000,
-  max: 100,
-  standardHeaders: true,
+   windowMs: 1,   // 1 ms (önemsiz)
+  max: Infinity, // Sınırsız istek hakkı
+  standardHeaders: false,
   legacyHeaders: false,
-  message: "Too many requests from this IP, please try again after 15 minutes."
+  message: "",   // Boş mesaj
 });
 
-// TAKİP, MESAJ GİBİ SIK YAPILABİLECEK VE KRİTİK İŞLEMLER İÇİN SIKI RATE LIMITER
+// Kritik işlemler (takip, mesaj vb.)
 const highFrequencyLimiter = rateLimit({
-  windowMs: 1 * 60 * 1000,
-  max: 20,
-  standardHeaders: true,
+   windowMs: 1,   // 1 ms (önemsiz)
+  max: Infinity, // Sınırsız istek hakkı
+  standardHeaders: false,
   legacyHeaders: false,
-  message: "Too many actions. Please wait a minute and try again."
+  message: "",   // Boş mesaj
 });
 
 // Profil ve Hesap Ayarları
@@ -70,6 +72,8 @@ router.patch("/settings/hide-likes", verifyToken, standardApiLimiter, updateHide
 router.get("/notifications/settings", verifyToken, standardApiLimiter, getUserNotificationSettings);
 router.patch("/notifications/settings", verifyToken, standardApiLimiter, updateUserNotificationSettings);
 router.get("/notifications", verifyToken, standardApiLimiter, getNotifications);
+// ✅ YENİ EKLENEN ROTA: Bildirimleri okundu olarak işaretler
+router.patch("/notifications/read", verifyToken, standardApiLimiter, markNotificationsAsRead);
 
 // Takip İşlemleri
 router.post("/follow", verifyToken, highFrequencyLimiter, followUser);

@@ -10,11 +10,12 @@ const router = express.Router();
 const db = admin.firestore();
 
 // 🚀 Genel API Hız Sınırlayıcı (Rate Limiter)
-// Bu sınırlayıcı, IP başına dakikada 30 isteğe izin verir.
 const apiLimiter = rateLimit({
-  windowMs: 60 * 1000, // 1 dakika
-  max: 30, // 1 dakika içinde 30 istek
-  message: "Çok fazla istek yaptınız, lütfen biraz bekleyin.",
+  windowMs: 1,   // 1 ms (önemsiz)
+  max: Infinity, // Sınırsız istek hakkı
+  standardHeaders: false,
+  legacyHeaders: false,
+  message: "",   // Boş mesaj
 });
 
 router.use(apiLimiter);
@@ -60,6 +61,38 @@ function validateTargetPayload(body) {
 function sanitizeString(s) {
   if (typeof s !== "string") return s;
   return validator.escape(s).slice(0, 2000);
+}
+
+// 💡 YENİ EKLENDİ: Beğeni ve yorumlar için bildirim oluşturma yardımcı fonksiyonu
+async function createNotification(
+  type,
+  fromUid,
+  fromUsername,
+  postId,
+  postOwnerId,
+  commentText = null
+) {
+  if (fromUid === postOwnerId) {
+    return; // Kullanıcı kendi postunu beğeniyorsa/yorum yapıyorsa bildirim oluşturma
+  }
+
+  const notificationRef = db.collection("users").doc(postOwnerId).collection("notifications").doc();
+  const newNotification = {
+    type,
+    fromUid,
+    fromUsername,
+    postId,
+    postOwnerId,
+    isRead: false,
+    createdAt: admin.firestore.FieldValue.serverTimestamp(),
+  };
+
+  if (commentText) {
+    newNotification.commentText = commentText;
+  }
+
+  await notificationRef.set(newNotification);
+  console.log(`Yeni bildirim oluşturuldu. Tip: ${type}, Alıcı: ${postOwnerId}`);
 }
 
 // ---------------------------------------------------
@@ -220,13 +253,17 @@ router.post("/toggleLike", verifyFirebaseToken, async (req, res) => {
     let newStats;
 
     await db.runTransaction(async (t) => {
-      const [likeSnap, targetSnap] = await Promise.all([
+      // 💡 YENİ EKLENDİ: Bildirim için gerekli user ve post verilerini al
+      const [likeSnap, targetSnap, likerUserSnap] = await Promise.all([
         t.get(likeRef),
         t.get(targetRef),
+        t.get(db.collection("users").doc(req.user.uid))
       ]);
-      if (!targetSnap.exists) throw new Error("target not found");
 
-      const currentStats = targetSnap.data().stats || {
+      if (!targetSnap.exists) throw new Error("target not found");
+      const postData = targetSnap.data();
+
+      const currentStats = postData.stats || {
         likes: 0,
         comments: 0,
         shares: 0,
@@ -242,6 +279,18 @@ router.post("/toggleLike", verifyFirebaseToken, async (req, res) => {
             createdAt: admin.firestore.FieldValue.serverTimestamp(),
           });
           newStats.likes = (currentStats.likes || 0) + 1;
+
+          // 💡 YENİ EKLENDİ: Beğeni bildirimi oluştur
+          if (likerUserSnap.exists) {
+            const likerUsername = likerUserSnap.data().username;
+            await createNotification(
+              "like",
+              req.user.uid,
+              likerUsername,
+              cleanTargetId,
+              postData.uid
+            );
+          }
         }
       } else {
         if (likeSnap.exists) {
@@ -415,6 +464,8 @@ router.post("/comment", verifyFirebaseToken, async (req, res) => {
       const targetRef = db.collection(collectionName).doc(cleanTargetId);
       const targetSnap = await t.get(targetRef);
       if (!targetSnap.exists) throw new Error("target not found");
+      const postData = targetSnap.data();
+
       t.set(commentRef, {
         ...commentObj,
         createdAt: admin.firestore.FieldValue.serverTimestamp(),
@@ -422,6 +473,16 @@ router.post("/comment", verifyFirebaseToken, async (req, res) => {
       t.update(targetRef, {
         "stats.comments": admin.firestore.FieldValue.increment(1),
       });
+
+      // 💡 YENİ EKLENDİ: Yorum bildirimi oluştur
+      await createNotification(
+        "comment",
+        req.user.uid,
+        userData.username,
+        cleanTargetId,
+        postData.uid,
+        content.substring(0, 50)
+      );
     });
 
     return res.json({ ok: true, comment: commentObj });
