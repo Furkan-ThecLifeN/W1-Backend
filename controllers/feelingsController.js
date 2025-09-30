@@ -1,9 +1,11 @@
 const admin = require("firebase-admin");
 const db = admin.firestore();
 
-exports.sharePost = async (req, res) => {
+/**
+ * Yeni bir feeling paylaşır
+ */
+exports.shareFeeling = async (req, res) => {
   try {
-    // Frontend'den gelen 'postText' değişkenini doğru şekilde yakalıyoruz.
     const { postText, images, privacy } = req.body;
     const userId = req.user.uid;
 
@@ -13,8 +15,7 @@ exports.sharePost = async (req, res) => {
     }
     const userData = userDoc.data();
 
-    // Firestore'a kaydedilecek gönderi yapısını oluştur
-    const newPostData = {
+    const newFeelingData = {
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       displayName: userData.displayName || "Kullanıcı",
       images: images || [],
@@ -26,16 +27,13 @@ exports.sharePost = async (req, res) => {
         shares: 0,
         saves: 0,
       },
-      // Backend'de yakaladığımız 'postText' değişkenini burada kullanıyoruz.
       text: postText || "",
       uid: userId,
-      username: userData.username || "unknown_user", // Kullanıcı verisinden username alanını al
+      username: userData.username || "unknown_user",
+      commentsDisabled: false, // Başlangıçta yorumlar açık
     };
 
-    // Gönderiyi 'globalFeelings' koleksiyonuna kaydet
-    const newFeelingRef = await db
-      .collection("globalFeelings")
-      .add(newPostData);
+    const newFeelingRef = await db.collection("globalFeelings").add(newFeelingData);
 
     res.status(201).json({
       message: "Gönderi başarıyla paylaşıldı!",
@@ -47,11 +45,92 @@ exports.sharePost = async (req, res) => {
   }
 };
 
+/**
+ * Feeling siler
+ */
+exports.deleteFeeling = async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const uid = req.user.uid;
+
+    const feelingRef = db.collection("globalFeelings").doc(postId);
+    const doc = await feelingRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Gönderi bulunamadı." });
+    }
+    if (doc.data().uid !== uid) {
+      return res.status(403).json({ error: "Yetkiniz yok." });
+    }
+
+    await feelingRef.delete();
+    res.status(200).json({ message: "Gönderi başarıyla silindi." });
+  } catch (error) {
+    console.error("Gönderi silme hatası:", error);
+    res.status(500).json({ error: "Gönderi silinemedi.", details: error.message });
+  }
+};
+
+/**
+ * Yorumları kapatır
+ */
+exports.disableComments = async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const uid = req.user.uid;
+
+    const feelingRef = db.collection("globalFeelings").doc(postId);
+    const doc = await feelingRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Gönderi bulunamadı." });
+    }
+    if (doc.data().uid !== uid) {
+      return res.status(403).json({ error: "Yetkiniz yok." });
+    }
+
+    await feelingRef.update({ commentsDisabled: true });
+    res.status(200).json({ message: "Yorumlar kapatıldı." });
+  } catch (error) {
+    console.error("Yorumları kapatma hatası:", error);
+    res.status(500).json({ error: "Yorumlar kapatılamadı.", details: error.message });
+  }
+};
+
+/**
+ * Yorumları açar
+ */
+exports.enableComments = async (req, res) => {
+  try {
+    const { postId } = req.params;
+    const uid = req.user.uid;
+
+    const feelingRef = db.collection("globalFeelings").doc(postId);
+    const doc = await feelingRef.get();
+
+    if (!doc.exists) {
+      return res.status(404).json({ error: "Gönderi bulunamadı." });
+    }
+    if (doc.data().uid !== uid) {
+      return res.status(403).json({ error: "Yetkiniz yok." });
+    }
+
+    await feelingRef.update({ commentsDisabled: false });
+    res.status(200).json({ message: "Yorumlar açıldı." });
+  } catch (error) {
+    console.error("Yorumları açma hatası:", error);
+    res.status(500).json({ error: "Yorumlar açılamadı.", details: error.message });
+  }
+};
+
+/**
+ * ID ile tek bir feeling çeker
+ */
 exports.getFeelingById = async (req, res) => {
   try {
     const { postId } = req.params;
-    const postRef = db.collection("globalFeelings").doc(postId); // Veya privacy ayarına göre dinamik olarak çekin
-    const doc = await postRef.get();
+    const docRef = db.collection("globalFeelings").doc(postId);
+    const doc = await docRef.get();
 
     if (!doc.exists) {
       return res.status(404).json({ error: "Gönderi bulunamadı." });
@@ -60,6 +139,6 @@ exports.getFeelingById = async (req, res) => {
     res.status(200).json({ post: doc.data() });
   } catch (error) {
     console.error("Gönderi çekme hatası:", error);
-    res.status(500).json({ error: "Gönderi çekme hatası." });
+    res.status(500).json({ error: "Gönderi çekilemedi.", details: error.message });
   }
 };
