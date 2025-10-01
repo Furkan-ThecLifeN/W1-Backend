@@ -16,6 +16,8 @@ exports.shareFeeling = async (req, res) => {
     const userData = userDoc.data();
 
     const newFeelingData = {
+      type: "feeling",
+      collectionName: "globalFeelings",
       createdAt: admin.firestore.FieldValue.serverTimestamp(),
       displayName: userData.displayName || "Kullanıcı",
       images: images || [],
@@ -44,6 +46,7 @@ exports.shareFeeling = async (req, res) => {
     res.status(500).json({ error: "Sunucu hatası. Lütfen tekrar deneyin." });
   }
 };
+
 
 /**
  * Feeling siler

@@ -769,7 +769,6 @@ exports.removeFollowing = async (req, res) => {
   }
 };
 
-
 // ✅ YENİ: Takip isteği geri çekme
 exports.retractFollowRequest = async (req, res) => {
   try {
@@ -1221,7 +1220,6 @@ exports.getFollowers = async (req, res) => {
     });
   }
 };
-
 
 // ✅ YENİ: Belirli bir kullanıcının takip ettiklerini getirme
 exports.getFollowing = async (req, res) => {

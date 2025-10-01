@@ -34,6 +34,7 @@ exports.createFeed = async (req, res) => {
 
     const postData = {
       type: "feed",
+      collectionName: "globalFeeds",
       createdAt: FieldValue.serverTimestamp(),
       uid: userId,
       ownerId: userId,
@@ -55,7 +56,7 @@ exports.createFeed = async (req, res) => {
         shares: 0,
         saves: 0,
       },
-      commentsDisabled: false, // yorumlar başlangıçta açık
+      commentsDisabled: false,
     };
 
     const newFeedRef = db

@@ -13,7 +13,6 @@ exports.sharePost = async (req, res) => {
   const { caption, privacy, imageUrls: bodyImageUrls } = req.body;
   const uid = req.user.uid;
 
-  // Frontend'den gelen veya multer ile yüklenen görselleri birleştirir.
   let imageUrls = [];
   if (Array.isArray(bodyImageUrls)) {
     imageUrls = bodyImageUrls;
@@ -25,7 +24,6 @@ exports.sharePost = async (req, res) => {
     imageUrls = [...imageUrls, ...uploadedUrls];
   }
 
-  // Gönderi içeriği boşsa hatayı önler.
   if (!caption?.trim() && imageUrls.length === 0) {
     return res.status(400).json({ error: "Gönderi metni veya en az bir görsel gereklidir." });
   }
@@ -38,6 +36,8 @@ exports.sharePost = async (req, res) => {
     const userData = userDoc.data();
 
     const postData = {
+      type: "post",
+      collectionName: "globalPosts",
       uid,
       username: userData.username || "unknown_user",
       displayName: userData.displayName || "Kullanıcı",
@@ -51,23 +51,18 @@ exports.sharePost = async (req, res) => {
         comments: 0,
         shares: 0,
       },
-      commentsDisabled: false, // Yorumlar ilk başta açık olur
+      commentsDisabled: false,
     };
 
-    // Yeni gönderi için benzersiz ID oluşturur ve bu ID'yi her iki koleksiyon için de kullanır.
     const newPostRef = db.collection("users").doc(uid).collection("posts").doc();
     const newGlobalPostRef = db.collection("globalPosts").doc(newPostRef.id);
 
-    // Batch işlemi başlatılır.
     const batch = db.batch();
-
-    // Kullanıcının özel koleksiyonuna ve global koleksiyona aynı veriyi kaydeder.
     batch.set(newPostRef, postData);
     if (privacy === "public") {
       batch.set(newGlobalPostRef, postData);
     }
 
-    // İşlem tamamlanır.
     await batch.commit();
 
     return res.status(201).json({
@@ -82,6 +77,7 @@ exports.sharePost = async (req, res) => {
     });
   }
 };
+
 
 /**
  * Gönderiyi hem kullanıcının kişisel koleksiyonundan hem de genel akıştan siler.
