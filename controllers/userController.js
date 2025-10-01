@@ -574,10 +574,10 @@ exports.followUser = async (req, res) => {
     if (!existingFollow.empty) {
       const status = existingFollow.docs[0].data().status;
       if (status === "following") {
-         return res.status(409).json({ error: "Kullanıcıyı zaten takip ediyorsunuz." });
+        return res.status(409).json({ error: "Kullanıcıyı zaten takip ediyorsunuz." });
       }
       if (status === "pending") {
-         return res.status(409).json({ error: "Takip isteği zaten gönderildi." });
+        return res.status(409).json({ error: "Takip isteği zaten gönderildi." });
       }
     }
 
@@ -595,29 +595,35 @@ exports.followUser = async (req, res) => {
 
     // Sadece takip hemen başlıyorsa istatistikleri güncelle
     if (followStatusToSet === "following") {
-        batch.update(currentUserDoc.ref, {
-            "stats.following": admin.firestore.FieldValue.increment(1),
-        });
-        batch.update(targetUserDoc.ref, {
-            "stats.followers": admin.firestore.FieldValue.increment(1),
-        });
-        // 🔔 Bildirim ekle (yeni takipçi)
-        batch.set(db.collection("users").doc(targetUid).collection("notifications").doc(), {
-            fromUid: uid,
-            toUid: targetUid,
-            type: "new_follower",
-            createdAt: now,
-            fromUsername: currentUserDoc.data().username || "Anonim",
-        });
+      batch.update(currentUserDoc.ref, {
+        "stats.following": admin.firestore.FieldValue.increment(1),
+      });
+      batch.update(targetUserDoc.ref, {
+        "stats.followers": admin.firestore.FieldValue.increment(1),
+      });
+      
+      // ✅ GÜNCELLEME: isRead: false eklendi
+      // 🔔 Bildirim ekle (yeni takipçi)
+      batch.set(db.collection("users").doc(targetUid).collection("notifications").doc(), {
+        fromUid: uid,
+        toUid: targetUid,
+        type: "new_follower",
+        createdAt: now,
+        fromUsername: currentUserDoc.data().username || "Anonim",
+        isRead: false, // Okunmamış olarak işaretlendi.
+      });
     } else if (followStatusToSet === "pending") {
-        // 🔔 Bildirim ekle (takip isteği)
-        batch.set(db.collection("users").doc(targetUid).collection("notifications").doc(), {
-            fromUid: uid,
-            toUid: targetUid,
-            type: "follow_request",
-            createdAt: now,
-            fromUsername: currentUserDoc.data().username || "Anonim",
-        });
+      
+      // ✅ GÜNCELLEME: isRead: false eklendi
+      // 🔔 Bildirim ekle (takip isteği)
+      batch.set(db.collection("users").doc(targetUid).collection("notifications").doc(), {
+        fromUid: uid,
+        toUid: targetUid,
+        type: "follow_request",
+        createdAt: now,
+        fromUsername: currentUserDoc.data().username || "Anonim",
+        isRead: false, // Okunmamış olarak işaretlendi.
+      });
     }
 
     await batch.commit();
@@ -810,6 +816,7 @@ exports.acceptFollowRequest = async (req, res) => {
   try {
     const { requesterUid } = req.params;
     const { uid: targetUid } = req.user;
+    const now = admin.firestore.FieldValue.serverTimestamp(); // Tanımlanmış
 
     const batch = db.batch();
 
@@ -838,14 +845,27 @@ exports.acceptFollowRequest = async (req, res) => {
       batch.update(targetUserDoc.ref, { "stats.followers": admin.firestore.FieldValue.increment(1) });
     }
 
-    // Bildirimleri silme yerine tipini güncelle
+    // Bildirimleri güncelle: Kendi bildirimini (targetUid) okundu olarak işaretle
     const notificationsSnapshot = await db.collection("users").doc(targetUid).collection("notifications")
-        .where("fromUid", "==", requesterUid)
-        .where("type", "==", "follow_request")
-        .get();
+      .where("fromUid", "==", requesterUid)
+      .where("type", "==", "follow_request")
+      .get();
 
     notificationsSnapshot.docs.forEach(doc => {
-        batch.update(doc.ref, { type: "follow_accepted" });
+      batch.update(doc.ref, { 
+        type: "follow_accepted",
+        isRead: true, // Kabul ettiğinize göre bu bildirim artık okundu sayılır.
+      });
+    });
+
+    // ✅ YENİ EKLENTİ: İstek gönderen kullanıcıya (requesterUid) takip kabul edildi bildirimi gönder
+    batch.set(db.collection("users").doc(requesterUid).collection("notifications").doc(), {
+      fromUid: targetUid, // Kabul eden
+      toUid: requesterUid, // Kabul edilen
+      type: "follow_accepted",
+      createdAt: now,
+      fromUsername: targetUserDoc.data().username || "Anonim",
+      isRead: false, // Yeni kabul bildirimi, istek gönderen için okunmamış olacak.
     });
 
     await batch.commit();
@@ -1131,11 +1151,12 @@ exports.getNotifications = async (req, res) => {
   }
 };
 
-// 💡 Yeni fonksiyon: Bildirimleri okundu olarak işaretleme
-exports.markNotificationsAsRead = async (req, res) => {
+// ✅ YENİ EKLENEN KRİTİK FONKSİYON: Okunmamış bildirim sayısını getirme
+exports.getUnreadNotificationsCount = async (req, res) => {
   try {
     const { uid } = req.user;
-    const batch = db.batch();
+
+    // Kullanıcının 'notifications' alt koleksiyonundaki tüm 'isRead: false' bildirimlerini say
     const notificationsSnapshot = await db
       .collection("users")
       .doc(uid)
@@ -1143,11 +1164,39 @@ exports.markNotificationsAsRead = async (req, res) => {
       .where("isRead", "==", false)
       .get();
 
+    const totalUnreadCount = notificationsSnapshot.size;
+
+    return res.status(200).json({ unreadCount: totalUnreadCount });
+  } catch (error) {
+    console.error("Okunmamış bildirim sayısı getirme hatası:", error);
+    res
+      .status(500)
+      .json({ error: "Okunmamış bildirim sayısı alınırken bir hata oluştu." });
+  }
+};
+
+// 💡 Sizin sağladığınız fonksiyonun güvenli versiyonu (Bildirimleri Okundu İşaretleme)
+exports.markNotificationsAsRead = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const batch = db.batch();
+    
+    // Sadece okunmamış (isRead: false) olanları günceller
+    const notificationsSnapshot = await db
+      .collection("users")
+      .doc(uid)
+      .collection("notifications")
+      .where("isRead", "==", false)
+      .get();
+
+    // Batch işlemi ile tüm unread bildirimleri tek seferde atomically günceller
     notificationsSnapshot.docs.forEach((doc) => {
       batch.update(doc.ref, { isRead: true });
     });
 
     await batch.commit();
+    
+    // Başarılı olursa 200 döner
     return res.status(200).json({ message: "Tüm bildirimler okundu olarak işaretlendi." });
   } catch (error) {
     console.error("Bildirimleri okundu olarak işaretleme hatası:", error);

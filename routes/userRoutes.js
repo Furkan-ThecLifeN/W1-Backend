@@ -30,6 +30,7 @@ const {
   removeFollower,
   removeFollowing,
   markNotificationsAsRead,
+  getUnreadNotificationsCount,
 } = require("../controllers/userController");
 
 // Profil ve Hesap Ayarları
@@ -53,6 +54,9 @@ router.get("/notifications/settings", verifyToken, getUserNotificationSettings);
 router.patch("/notifications/settings", verifyToken, updateUserNotificationSettings);
 router.get("/notifications", verifyToken, getNotifications);
 router.patch("/notifications/read", verifyToken, markNotificationsAsRead);
+
+// ✅ YENİ ROTA: Okunmamış bildirim sayısını getirme
+router.get("/notifications/unread-count", verifyToken, getUnreadNotificationsCount); 
 
 // Takip İşlemleri
 router.post("/follow", verifyToken, followUser);
