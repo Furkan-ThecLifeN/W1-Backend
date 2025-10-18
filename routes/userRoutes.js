@@ -31,6 +31,11 @@ const {
   removeFollowing,
   markNotificationsAsRead,
   getUnreadNotificationsCount,
+  // ✅ Engelleme kontrolleri
+  blockUser,
+  unblockUser,
+  // ✅ YENİ EKLENDİ
+  getBlockedUsers,
 } = require("../controllers/userController");
 
 // Profil ve Hesap Ayarları
@@ -55,7 +60,7 @@ router.patch("/notifications/settings", verifyToken, updateUserNotificationSetti
 router.get("/notifications", verifyToken, getNotifications);
 router.patch("/notifications/read", verifyToken, markNotificationsAsRead);
 
-// ✅ YENİ ROTA: Okunmamış bildirim sayısını getirme
+// ✅ Okunmamış bildirim sayısı
 router.get("/notifications/unread-count", verifyToken, getUnreadNotificationsCount); 
 
 // Takip İşlemleri
@@ -69,6 +74,12 @@ router.get("/:targetUid/following", verifyToken, getFollowing);
 router.get("/requests/pending", verifyToken, getPendingRequests);
 router.delete("/remove-follower/:followerUid", verifyToken, removeFollower);
 router.delete("/remove-following/:followingUid", verifyToken, removeFollowing);
+
+// ✅ Engelleme
+router.post("/block/:targetUid", verifyToken, blockUser);
+router.delete("/unblock/:targetUid", verifyToken, unblockUser);
+// ✅ YENİ ROTA EKLENDİ: Engellenenler listesini getir
+router.get("/blocked-list", verifyToken, getBlockedUsers);
 
 // Mesajlaşma
 router.post("/message", verifyToken, sendMessage);

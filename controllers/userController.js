@@ -66,26 +66,21 @@ exports.updateProfile = async (req, res) => {
       lastChangeDatesUpdates.username = FieldValue.serverTimestamp();
     }
 
-    if (updates.photoURL && updates.photoURL.startsWith("data:")) {
+    // ✅ YENİ LOGIC: Base64 yüklemesi yerine doğrudan URL'yi kaydetme
+    if (updates.photoURL && updates.photoURL !== userData.photoURL) {
       const cooldownError = checkCooldown("photoURL");
       if (cooldownError) return res.status(403).json({ error: cooldownError });
-      const bucket = getStorage().bucket();
-      const filename = `profile_pictures/${uid}/${Date.now()}_profile.jpeg`;
-      const file = bucket.file(filename);
-      const base64Data = updates.photoURL.replace(
-        /^data:image\/\w+;base64,/,
-        ""
-      );
-      const buffer = Buffer.from(base64Data, "base64");
-      await file.save(buffer, {
-        metadata: { contentType: "image/jpeg" },
-        public: true,
-      });
-      const photoURL = `https://storage.googleapis.com/${bucket.name}/${filename}`;
-      firestoreUpdates.photoURL = photoURL;
-      authUpdates.photoURL = photoURL;
+
+      // Basit bir URL doğrulaması
+      if (!updates.photoURL.startsWith("http")) {
+        return res.status(400).json({ error: "Geçersiz fotoğraf URL formatı." });
+      }
+
+      firestoreUpdates.photoURL = updates.photoURL;
+      authUpdates.photoURL = updates.photoURL;
       lastChangeDatesUpdates.photoURL = FieldValue.serverTimestamp();
     }
+
 
     if (
       updates.displayName !== undefined &&
@@ -496,15 +491,219 @@ exports.updateUserNotificationSettings = async (req, res) => {
   }
 };
 
-// ✅ YENİ: Kullanıcı arama rotası
+// ✅ YENİ: Kullanıcı Engelleme
+exports.blockUser = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const { targetUid } = req.params;
+    const now = FieldValue.serverTimestamp(); // Ne zaman engellendiği bilgisi
+
+    if (uid === targetUid) {
+      return res.status(400).json({ error: "Kendinizi engelleyemezsiniz." });
+    }
+
+    const batch = db.batch();
+
+    // ✅ GÜNCELLEME: Veri yazmadan önce her iki kullanıcının da dokümanını ÇEK
+    const [userDoc, targetDoc] = await Promise.all([
+      db.collection("users").doc(uid).get(),
+      db.collection("users").doc(targetUid).get(),
+    ]);
+
+    // ✅ GÜNCELLEME: Engellenecek kullanıcı var mı kontrol et
+    if (!targetDoc.exists) {
+      return res.status(404).json({ error: "Engellenecek kullanıcı bulunamadı." });
+    }
+    // (userDoc, giriş yapıldığı için var olmalıdır)
+
+    // ✅ GÜNCELLEME: Verileri al
+    const userData = userDoc.data();
+    const targetData = targetDoc.data();
+
+    // 1. SİZİN belgeniz -> 'blockedUsers' (Engellediklerim) koleksiyonu
+    const userBlockData = {
+      type: "block_sent",         // Eylem Türü: Engel Gönderildi
+      uid: targetUid,             // Kimi engellediğiniz
+      blockedAt: now,
+      // ✅ YENİ EKLENEN ALANLAR (BlockedUsers.jsx sayfası için)
+      blockedUsername: targetData.username,
+      blockedDisplayName: targetData.displayName,
+      blockedPhotoURL: targetData.photoURL || null, // null olabilir
+    };
+    batch.set(userDoc.ref.collection("blockedUsers").doc(targetUid), userBlockData);
+
+    // 2. HEDEF KİŞİNİN belgesi -> 'blockedBy' (Beni Engelleyenler) koleksiyonu
+    const targetBlockData = {
+      type: "block_received",     // Eylem Türü: Engel Alındı
+      uid: uid,                   // Kim tarafından engellendiği (Siz)
+      blockedAt: now,
+      // ✅ YENİ EKLENEN ALANLAR (Simetri ve ileride kullanım için)
+      blockerUsername: userData.username,
+      blockerDisplayName: userData.displayName,
+      blockerPhotoURL: userData.photoURL || null, // null olabilir
+    };
+    batch.set(targetDoc.ref.collection("blockedBy").doc(uid), targetBlockData);
+
+
+    // 2. Takip ilişkilerini kontrol et ve kaldır (Bu kısım aynı kalmalı)
+    const followQuery1 = db
+      .collection("follows")
+      .where("followerUid", "==", uid)
+      .where("followingUid", "==", targetUid);
+    const followQuery2 = db
+      .collection("follows")
+      .where("followerUid", "==", targetUid)
+      .where("followingUid", "==", uid);
+
+    const [followSnapshot1, followSnapshot2] = await Promise.all([
+      followQuery1.get(),
+      followQuery2.get(),
+    ]);
+
+    let followingDecrement = 0;
+    let followersDecrement = 0;
+    let targetFollowingDecrement = 0;
+    let targetFollowersDecrement = 0;
+
+    if (!followSnapshot1.empty) {
+      followSnapshot1.docs.forEach((doc) => batch.delete(doc.ref));
+      if (followSnapshot1.docs[0].data().status === "following") {
+        followingDecrement = -1;
+        targetFollowersDecrement = -1;
+      }
+    }
+
+    if (!followSnapshot2.empty) {
+      followSnapshot2.docs.forEach((doc) => batch.delete(doc.ref));
+      if (followSnapshot2.docs[0].data().status === "following") {
+        followersDecrement = -1;
+        targetFollowingDecrement = -1;
+      }
+    }
+
+    // 3. İstatistikleri güncelle (Referansları .ref olarak kullan)
+    if (followingDecrement || followersDecrement) {
+      batch.update(userDoc.ref, { // .ref kullandık
+        "stats.following": FieldValue.increment(followingDecrement),
+        "stats.followers": FieldValue.increment(followersDecrement),
+      });
+    }
+    if (targetFollowingDecrement || targetFollowersDecrement) {
+      batch.update(targetDoc.ref, { // .ref kullandık
+        "stats.following": FieldValue.increment(targetFollowingDecrement),
+        "stats.followers": FieldValue.increment(targetFollowersDecrement),
+      });
+    }
+
+    await batch.commit();
+
+    // Güncel hedef istatistiklerini al (batch'ten sonra güncel veriyi çek)
+    const updatedTargetUserDoc = await targetDoc.ref.get(); // .ref kullandık
+    const newStats = updatedTargetUserDoc.data().stats;
+
+    return res.status(200).json({
+      message: "Kullanıcı başarıyla engellendi.",
+      status: "blocking",
+      newStats: newStats,
+    });
+  } catch (error) {
+    console.error("Kullanıcı engelleme hatası:", error);
+    return res
+      .status(500)
+      .json({
+        error: "Kullanıcı engellenirken bir hata oluştu.",
+        details: error.message,
+      });
+  }
+};
+
+// ✅ YENİ: Kullanıcı Engelini Kaldırma
+exports.unblockUser = async (req, res) => {
+  try {
+    const { uid } = req.user;
+    const { targetUid } = req.params;
+
+    const batch = db.batch();
+    const userRef = db.collection("users").doc(uid);
+    const targetRef = db.collection("users").doc(targetUid);
+
+    // Engelleme kayıtlarını sil
+    batch.delete(userRef.collection("blockedUsers").doc(targetUid));
+    batch.delete(targetRef.collection("blockedBy").doc(uid));
+
+    await batch.commit();
+
+    // Engel kalkınca 'none' durumuna döner, istatistik değişmez.
+    return res.status(200).json({
+      message: "Kullanıcının engeli kaldırıldı.",
+      status: "none",
+    });
+  } catch (error) {
+    console.error("Kullanıcı engeli kaldırma hatası:", error);
+    return res
+      .status(500)
+      .json({
+        error: "Kullanıcı engeli kaldırılırken bir hata oluştu.",
+        details: error.message,
+      });
+  }
+};
+
+/**
+ * Giriş yapmış kullanıcının engellediği kullanıcıların listesini getirir.
+ */
+exports.getBlockedUsers = async (req, res) => {
+  try {
+    const { uid } = req.user;
+
+    const blockedSnapshot = await db
+      .collection("users")
+      .doc(uid)
+      .collection("blockedUsers")
+      .orderBy("blockedAt", "desc") // En son engellenen en üstte
+      .get();
+
+    if (blockedSnapshot.empty) {
+      return res.status(200).json({ blockedUsers: [] });
+    }
+
+    // Dokümanların içindeki veriyi doğrudan alıyoruz (blockUser'da kaydetmiştik)
+    const blockedUsers = blockedSnapshot.docs.map(doc => doc.data());
+
+    return res.status(200).json({ blockedUsers });
+
+  } catch (error) {
+    console.error("Engellenen kullanıcıları getirme hatası:", error);
+    return res.status(500).json({ error: "Engellenen kullanıcılar getirilirken bir hata oluştu." });
+  }
+};
+
+// ✅ GÜNCELLENDİ: Kullanıcı arama rotası (Engellenenleri filtrele)
 exports.searchUsers = async (req, res) => {
   try {
     const { search } = req.query;
-    const { uid: currentUserId } = req.user; // Oturum açmış kullanıcının UID'sini al
+    const { uid: currentUserId } = req.user; 
 
     if (!search) {
       return res.status(400).json({ error: "Arama metni gerekli." });
     }
+
+    // ✅ Engellenen ve engelleyen UID listelerini al
+    const blockedSnapshot = await db
+      .collection("users")
+      .doc(currentUserId)
+      .collection("blockedUsers")
+      .get();
+    const blockedBySnapshot = await db
+      .collection("users")
+      .doc(currentUserId)
+      .collection("blockedBy")
+      .get();
+
+    const blockedUids = new Set([
+      ...blockedSnapshot.docs.map((d) => d.id),
+      ...blockedBySnapshot.docs.map((d) => d.id),
+    ]);
 
     const usersRef = db.collection("users");
     const usernameQuery = usersRef
@@ -515,8 +714,8 @@ exports.searchUsers = async (req, res) => {
     const snapshot = await usernameQuery.get();
     const users = [];
     snapshot.forEach((doc) => {
-      // Kendi profilini sonuçlardan hariç tut
-      if (doc.id !== currentUserId) {
+      // Kendi profilini VE engellenen/engelleyenleri hariç tut
+      if (doc.id !== currentUserId && !blockedUids.has(doc.id)) {
         const userData = doc.data();
         users.push({
           uid: userData.uid,
@@ -539,9 +738,7 @@ exports.searchUsers = async (req, res) => {
   }
 };
 
-// ✅ Düzeltme Notu: followUser fonksiyonu zaten doğru çalışıyor.
-// Eğer isPrivate true ise, status'u 'pending' olarak kaydediyor.
-// Bu yüzden bu fonksiyonda bir değişiklik yapmaya gerek yok.
+// ✅ Takip etme (Engelleme kontrolü dahil)
 exports.followUser = async (req, res) => {
   try {
     const { uid } = req.user;
@@ -550,6 +747,16 @@ exports.followUser = async (req, res) => {
 
     if (uid === targetUid) {
       return res.status(400).json({ error: "Kendinizi takip edemezsiniz." });
+    }
+
+    // ✅ Engelleme Kontrolü
+    const [isBlockingDoc, isBlockedByDoc] = await Promise.all([
+      db.collection("users").doc(uid).collection("blockedUsers").doc(targetUid).get(),
+      db.collection("users").doc(uid).collection("blockedBy").doc(targetUid).get(),
+    ]);
+
+    if (isBlockingDoc.exists || isBlockedByDoc.exists) {
+      return res.status(403).json({ error: "Bu işlem engelleme nedeniyle gerçekleştirilemez." });
     }
 
     const [currentUserDoc, targetUserDoc] = await Promise.all([
@@ -601,8 +808,7 @@ exports.followUser = async (req, res) => {
       batch.update(targetUserDoc.ref, {
         "stats.followers": admin.firestore.FieldValue.increment(1),
       });
-      
-      // ✅ GÜNCELLEME: isRead: false eklendi
+
       // 🔔 Bildirim ekle (yeni takipçi)
       batch.set(db.collection("users").doc(targetUid).collection("notifications").doc(), {
         fromUid: uid,
@@ -610,11 +816,9 @@ exports.followUser = async (req, res) => {
         type: "new_follower",
         createdAt: now,
         fromUsername: currentUserDoc.data().username || "Anonim",
-        isRead: false, // Okunmamış olarak işaretlendi.
+        isRead: false,
       });
     } else if (followStatusToSet === "pending") {
-      
-      // ✅ GÜNCELLEME: isRead: false eklendi
       // 🔔 Bildirim ekle (takip isteği)
       batch.set(db.collection("users").doc(targetUid).collection("notifications").doc(), {
         fromUid: uid,
@@ -622,7 +826,7 @@ exports.followUser = async (req, res) => {
         type: "follow_request",
         createdAt: now,
         fromUsername: currentUserDoc.data().username || "Anonim",
-        isRead: false, // Okunmamış olarak işaretlendi.
+        isRead: false,
       });
     }
 
@@ -920,16 +1124,24 @@ exports.rejectFollowRequest = async (req, res) => {
 };
 
 
-// ✅ YENİ: Kullanıcıya mesaj gönderme veya mesaj isteği atma
+// ✅ Kullanıcıya mesaj gönderme veya mesaj isteği atma (Engelleme kontrolü dahil)
 exports.sendMessage = async (req, res) => {
   try {
     const { uid } = req.user;
     const { targetUid, messageContent } = req.body;
 
     if (uid === targetUid) {
-      return res
-        .status(400)
-        .json({ error: "Kendinize mesaj gönderemezsiniz." });
+      return res.status(400).json({ error: "Kendinize mesaj gönderemezsiniz." });
+    }
+
+    // ✅ Engelleme Kontrolü
+    const [isBlockingDoc, isBlockedByDoc] = await Promise.all([
+      db.collection("users").doc(uid).collection("blockedUsers").doc(targetUid).get(),
+      db.collection("users").doc(uid).collection("blockedBy").doc(targetUid).get(),
+    ]);
+
+    if (isBlockingDoc.exists || isBlockedByDoc.exists) {
+      return res.status(403).json({ error: "Engellenen kullanıcıya mesaj gönderemezsiniz." });
     }
 
     const [currentUserDoc, targetUserDoc] = await Promise.all([
@@ -942,34 +1154,44 @@ exports.sendMessage = async (req, res) => {
     }
 
     const targetUserData = targetUserDoc.data();
-    const messagesPrivacy =
-      targetUserData.privacySettings?.messages || "everyone";
+    const messagesPrivacy = targetUserData.privacySettings?.messages || "everyone";
 
-    const isFollowing = await db
+    const isFollowingQuery = await db
       .collection("follows")
       .where("followerUid", "==", uid)
       .where("followingUid", "==", targetUid)
       .get();
 
+    const isFollowing = !isFollowingQuery.empty;
+
     let messageType = "message";
-    let conversationId;
 
     // Mesajlaşma mantığı
     if (messagesPrivacy === "everyone" || isFollowing) {
       messageType = "message";
-      // Doğrudan mesaj gönderme
-      // Konuşma koleksiyonu oluşturulabilir veya mevcut olanı bulunabilir.
-      // Örnek: 'conversations' koleksiyonuna mesajı ekle
     } else {
       messageType = "messageRequest";
       // Mesaj isteği olarak kaydet
-      // Örnek: 'messageRequests' koleksiyonuna mesajı ekle
-      return res
-        .status(202)
-        .json({ message: "Mesaj isteği başarıyla gönderildi." });
+      const messageRequestRef = db.collection("messageRequests").doc();
+      await messageRequestRef.set({
+        senderUid: uid,
+        receiverUid: targetUid,
+        content: messageContent,
+        type: messageType,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
+      });
+
+      // Bildirim gönder
+      await this.sendNotification({
+        senderUid: uid,
+        receiverUid: targetUid,
+        type: "newMessageRequest",
+      });
+
+      return res.status(202).json({ message: "Mesaj isteği başarıyla gönderildi." });
     }
 
-    // Buraya mesajı Firestore'a yazma mantığı gelecek
+    // Doğrudan mesaj gönderme
     const messageRef = db.collection("messages").doc();
     await messageRef.set({
       senderUid: uid,
@@ -983,20 +1205,19 @@ exports.sendMessage = async (req, res) => {
     await this.sendNotification({
       senderUid: uid,
       receiverUid: targetUid,
-      type: messageType === "message" ? "newMessage" : "newMessageRequest",
+      type: "newMessage",
     });
 
     return res.status(200).json({ message: "Mesaj başarıyla gönderildi." });
   } catch (error) {
     console.error("Mesaj gönderme hatası:", error);
-    return res
-      .status(500)
-      .json({
-        error: "Mesaj gönderilirken bir hata oluştu.",
-        details: error.message,
-      });
+    return res.status(500).json({
+      error: "Mesaj gönderilirken bir hata oluştu.",
+      details: error.message,
+    });
   }
 };
+
 
 // ✅ YENİ: sendNotification fonksiyonu
 exports.sendNotification = async (
@@ -1087,7 +1308,7 @@ exports.getProfileByUsername = async (req, res) => {
   }
 };
 
-// ✅ GÜNCELLENDİ: Kullanıcılar arası takip durumunu kontrol etme
+// ✅ Kullanıcılar arası takip durumunu kontrol etme (Engelleme kontrolü dahil)
 exports.getFollowStatus = async (req, res) => {
   try {
     const { targetUid } = req.params;
@@ -1097,7 +1318,20 @@ exports.getFollowStatus = async (req, res) => {
       return res.status(200).json({ followStatus: "self" });
     }
 
-    // Takip ilişkisini veya takip isteğini kontrol et
+    // ✅ Engelleme kontrolü
+    const [isBlockingDoc, isBlockedByDoc] = await Promise.all([
+      db.collection("users").doc(uid).collection("blockedUsers").doc(targetUid).get(),
+      db.collection("users").doc(uid).collection("blockedBy").doc(targetUid).get(),
+    ]);
+
+    if (isBlockingDoc.exists) {
+      return res.status(200).json({ followStatus: "blocking" });
+    }
+    if (isBlockedByDoc.exists) {
+      return res.status(200).json({ followStatus: "blocked_by" });
+    }
+
+    // ✅ Takip ilişkisini veya takip isteğini kontrol et
     const followDoc = await db
       .collection("follows")
       .where("followerUid", "==", uid)
@@ -1105,24 +1339,21 @@ exports.getFollowStatus = async (req, res) => {
       .get();
 
     if (!followDoc.empty) {
-        // Belge varsa status'u kontrol et
-        const followData = followDoc.docs[0].data();
-        if (followData.status === "following") {
-             return res.status(200).json({ followStatus: "following" });
-        } else if (followData.status === "pending") {
-             return res.status(200).json({ followStatus: "pending" });
-        }
+      const followData = followDoc.docs[0].data();
+      if (followData.status === "following") {
+        return res.status(200).json({ followStatus: "following" });
+      } else if (followData.status === "pending") {
+        return res.status(200).json({ followStatus: "pending" });
+      }
     }
 
     return res.status(200).json({ followStatus: "none" });
   } catch (error) {
     console.error("Takip durumu getirme hatası:", error);
-    res
-      .status(500)
-      .json({
-        error: "Takip durumu çekilirken bir hata oluştu.",
-        details: error.message,
-      });
+    return res.status(500).json({
+      error: "Takip durumu çekilirken bir hata oluştu.",
+      details: error.message,
+    });
   }
 };
 
