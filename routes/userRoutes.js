@@ -34,36 +34,51 @@ const {
   // ✅ Engelleme kontrolleri
   blockUser,
   unblockUser,
-  // ✅ YENİ EKLENDİ
   getBlockedUsers,
+
+  // ✅ Yakın Arkadaşlar
+  getMutualFollows,
+  addCloseFriend,
+  removeCloseFriend,
+
+  // ✅ YENİ EKLENDİ
+  getFollowingWithCloseFriendStatus,
 } = require("../controllers/userController");
 
-// Profil ve Hesap Ayarları
+// ===========================================
+// 📌 Profil ve Hesap Ayarları
+// ===========================================
 router.patch("/profile/update", verifyToken, updateProfile);
 router.get("/profile/:username", getProfileByUsername);
 router.get("/profile/:targetUid/status", verifyToken, getFollowStatus);
 
-// Cihaz Yönetimi
+// ===========================================
+// 📱 Cihaz Yönetimi
+// ===========================================
 router.post("/devices/save", verifyToken, saveLoginDevice);
 router.get("/devices", verifyToken, getLoginDevices);
 
-// Gizlilik ve Ayarlar
+// ===========================================
+// 🔒 Gizlilik ve Ayarlar
+// ===========================================
 router.patch("/privacy", verifyToken, updatePrivacySettings);
 router.get("/:id/privacy", getPrivacySettings);
 router.patch("/privacy/messages", verifyToken, updateMessagesPrivacy);
 router.patch("/privacy/storyReplies", verifyToken, updateStoryRepliesPrivacy);
 router.patch("/settings/hide-likes", verifyToken, updateHideLikesSetting);
 
-// Bildirimler
+// ===========================================
+// 🔔 Bildirimler
+// ===========================================
 router.get("/notifications/settings", verifyToken, getUserNotificationSettings);
 router.patch("/notifications/settings", verifyToken, updateUserNotificationSettings);
 router.get("/notifications", verifyToken, getNotifications);
 router.patch("/notifications/read", verifyToken, markNotificationsAsRead);
+router.get("/notifications/unread-count", verifyToken, getUnreadNotificationsCount);
 
-// ✅ Okunmamış bildirim sayısı
-router.get("/notifications/unread-count", verifyToken, getUnreadNotificationsCount); 
-
-// Takip İşlemleri
+// ===========================================
+// 👥 Takip İşlemleri
+// ===========================================
 router.post("/follow", verifyToken, followUser);
 router.delete("/unfollow/:targetUid", verifyToken, unfollowUser);
 router.delete("/follow/request/retract/:targetUid", verifyToken, retractFollowRequest);
@@ -75,16 +90,35 @@ router.get("/requests/pending", verifyToken, getPendingRequests);
 router.delete("/remove-follower/:followerUid", verifyToken, removeFollower);
 router.delete("/remove-following/:followingUid", verifyToken, removeFollowing);
 
-// ✅ Engelleme
+// ===========================================
+// 🚫 Engelleme
+// ===========================================
 router.post("/block/:targetUid", verifyToken, blockUser);
 router.delete("/unblock/:targetUid", verifyToken, unblockUser);
-// ✅ YENİ ROTA EKLENDİ: Engellenenler listesini getir
 router.get("/blocked-list", verifyToken, getBlockedUsers);
 
-// Mesajlaşma
+// ===========================================
+// 💬 Mesajlaşma
+// ===========================================
 router.post("/message", verifyToken, sendMessage);
 
-// Arama
+// ===========================================
+// 🔍 Arama
+// ===========================================
 router.get("/search", verifyToken, searchUsers);
+
+// ===========================================
+// 🟢 Yakın Arkadaşlar (Close Friends)
+// ===========================================
+
+// ⚠️ ESKİ ROTA (artık CloseFriends.jsx tarafından kullanılmayacak, ama tutuldu)
+router.get("/close-friends/mutuals", verifyToken, getMutualFollows);
+
+// ✅ YENİ ROTA — CloseFriends.jsx artık bunu kullanıyor
+router.get("/close-friends/list", verifyToken, getFollowingWithCloseFriendStatus);
+
+// Ekleme ve çıkarma rotaları (bunlar aynı kalır)
+router.post("/close-friends/add/:targetUid", verifyToken, addCloseFriend);
+router.delete("/close-friends/remove/:targetUid", verifyToken, removeCloseFriend);
 
 module.exports = router;
