@@ -27,6 +27,47 @@ const transporter = nodemailer.createTransport({
 // Google OAuth2Client
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
 
+
+
+// --- YENİ YARDIMCI FONKSİYONLAR BURAYA EKLENDİ ---
+
+// 6 haneli rastgele bir kod üretir
+const generateResetCode = () => {
+  return Math.floor(100000 + Math.random() * 900000).toString();
+};
+
+// Kod içeren şifre sıfırlama e-postasını gönderir
+const sendResetCodeEmail = async (email, code) => {
+  const mailOptions = {
+    // Gmail hesabınız (w1globalmailbox@gmail.com)
+    from: `W1 Destek <${process.env.EMAIL_USER}>`,
+    to: email,
+    subject: "W1 Şifre SıfırlAMA Kodunuz",
+    html: `
+        <div style="font-family: Arial, sans-serif; line-height: 1.6;">
+            <p>Merhaba,</p>
+            <p>W1 hesabınız için bir şifre sıfırlama talebi aldık.</p>
+            <p>Aşağıdaki kodu kullanarak şifrenizi sıfırlayabilirsiniz. Bu kod <strong>10 dakika</strong> geçerlidir.</p>
+            <h2 style="font-size: 28px; letter-spacing: 3px; text-align: center; margin: 25px 0; padding: 10px; background-color: #f4f4f4; border-radius: 5px;">
+                ${code}
+            </h2>
+            <p>Eğer bu talebi siz yapmadıysanız, bu e-postayı görmezden gelebilirsiniz.</p>
+            <p>İyi günler,<br>W1 Ekibi</p>
+        </div>
+    `,
+  };
+
+  try {
+    await transporter.sendMail(mailOptions);
+    console.log(`Şifre sıfırlama kodu gönderildi: ${email}`);
+  } catch (error) {
+    console.error("Şifre sıfırlama kodu e-postası gönderilirken hata:", error);
+    // Hata oluşsa bile dışarıya yansıtmıyoruz ki kullanıcı e-postanın varlığını anlayamasın.
+  }
+};
+
+// --- MEVCUT YARDIMCI FONKSİYONLARINIZ (DEĞİŞMEDİ) ---
+
 // Hoş geldin e-postası
 const sendWelcomeEmail = async (email, username) => {
   const mailOptions = {
@@ -48,6 +89,9 @@ const sendWelcomeEmail = async (email, username) => {
     console.error("Hoş geldin e-postası gönderilirken hata:", error);
   }
 };
+
+
+
 
 // Silme Talebi E-postası
 const sendDeletionEmail = async (email) => {
@@ -530,28 +574,122 @@ exports.googleSignIn = async (req, res) => {
   }
 };
 
-// Şifre sıfırlama
+// --- GÜNCELLENEN ROUTE FONKSİYONU ---
+
+// Şifre sıfırlama (Adım 1: Kod Gönderme)
+// Bu fonksiyon, Firebase'in 'generatePasswordResetLink' metodunun yerini alıyor.
 exports.forgotPassword = async (req, res) => {
   const { email } = req.body;
   if (!email) {
     return res.status(400).json({ error: "E-posta adresi gerekli." });
   }
 
+  let userRecord;
   try {
-    await auth.generatePasswordResetLink(email);
-    res
-      .status(200)
-      .json({ message: "Şifre sıfırlama e-postası başarıyla gönderildi." });
+    userRecord = await auth.getUserByEmail(email);
   } catch (error) {
     if (error.code === "auth/user-not-found") {
-      return res.status(404).json({
-        error: "Bu e-posta adresine kayıtlı bir kullanıcı bulunamadı.",
-      });
+      // Güvenlik gereği (User Enumeration önlemi):
+      // Kullanıcı bulunamasa bile, sanki e-posta gönderilmiş gibi davranıyoruz.
+      // Sadece konsola logluyoruz.
+      console.log(`Şifre sıfırlama talebi: Kullanıcı bulunamadı (${email})`);
+      return res
+        .status(200)
+        .json({ message: "Eğer e-posta adresi sistemimizde kayıtlıysa, bir sıfırlama kodu gönderildi." });
     }
-    console.error("Şifre sıfırlama hatası:", error);
+    console.error("Kullanıcı arama hatası:", error);
+    return res.status(500).json({ error: "İşlem sırasında bir hata oluştu." });
+  }
+
+  // Kullanıcı bulundu, şimdi kod üretiyoruz.
+  const code = generateResetCode();
+  // Kodu 10 dakika geçerli olacak şekilde ayarlıyoruz.
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); 
+
+  try {
+    // Kodu ve son kullanma tarihini Firestore'a (yeni bir koleksiyona) kaydediyoruz.
+    // Bu, hangi kullanıcının hangi kodu ne zamana kadar kullanabileceğini takip etmemizi sağlar.
+    await db.collection("passwordResets").doc(userRecord.uid).set({
+      email: userRecord.email,
+      code: code,
+      expiresAt: expiresAt,
+    });
+
+    // E-postayı gönder
+    await sendResetCodeEmail(userRecord.email, code);
+
+    // Başarılı yanıt (kullanıcı bulunamasa da aynı yanıtı veriyoruz)
     return res
-      .status(500)
-      .json({ error: "Şifre sıfırlama sırasında bir hata oluştu." });
+      .status(200)
+      .json({ message: "Eğer e-posta adresi sistemimizde kayıtlıysa, bir sıfırlama kodu gönderildi." });
+      
+  } catch (error) {
+    console.error("Şifre sıfırlama (kod kaydetme/mail) hatası:", error);
+    return res.status(500).json({ error: "Sıfırlama kodu gönderilirken bir hata oluştu." });
+  }
+};
+
+// --- YENİ ROUTE FONKSİYONU ---
+
+// Şifre Sıfırlama (Adım 2: Kodu Doğrulama ve Yeni Şifre Belirleme)
+exports.resetPasswordWithCode = async (req, res) => {
+  const { email, code, newPassword } = req.body;
+
+  if (!email || !code || !newPassword) {
+    return res.status(400).json({ error: "E-posta, kod ve yeni şifre gereklidir." });
+  }
+
+  // Yeni şifrenin kurallarınıza uyup uymadığını kontrol ediyoruz.
+  if (!isValidPassword(newPassword)) {
+    return res.status(400).json({
+      error:
+        "Şifre en az 8 karakter olmalı, en az bir büyük harf, bir küçük harf, bir rakam ve bir özel karakter içermelidir.",
+    });
+  }
+  
+  let userRecord;
+  try {
+    userRecord = await auth.getUserByEmail(email);
+  } catch (error) {
+    // Kullanıcı yoksa, kodun veya e-postanın geçersiz olduğunu belirtiyoruz.
+    return res.status(404).json({ error: "Geçersiz e-posta veya sıfırlama kodu." });
+  }
+
+  try {
+    // Firestore'dan bu kullanıcı için kaydedilmiş sıfırlama belgesini al
+    const resetDocRef = db.collection("passwordResets").doc(userRecord.uid);
+    const resetDoc = await resetDocRef.get();
+
+    if (!resetDoc.exists) {
+      return res.status(400).json({ error: "Geçersiz veya süresi dolmuş sıfırlama kodu." });
+    }
+
+    const { code: storedCode, expiresAt } = resetDoc.data();
+
+    // 1. Kodu kontrol et
+    if (storedCode !== code) {
+      return res.status(400).json({ error: "Geçersiz sıfırlama kodu." });
+    }
+
+    // 2. Süresini kontrol et
+    if (new Date() > expiresAt.toDate()) {
+      await resetDocRef.delete(); // Süresi dolmuş kodu sil
+      return res.status(400).json({ error: "Sıfırlama kodunun süresi dolmuş. Lütfen yeni bir kod isteyin." });
+    }
+
+    // Her şey yolunda: Şifreyi Firebase Auth'da güncelle
+    await auth.updateUser(userRecord.uid, { password: newPassword });
+
+    // Kodu sil (tek kullanımlık olmalı)
+    await resetDocRef.delete();
+    
+    // (İsteğe bağlı) Şifrenin değiştiğine dair bir onay e-postası gönderilebilir.
+    
+    return res.status(200).json({ message: "Şifreniz başarıyla güncellendi." });
+
+  } catch (error) {
+    console.error("Şifre sıfırlama (kod doğrulama) hatası:", error);
+    return res.status(500).json({ error: "Şifre sıfırlanırken bir hata oluştu." });
   }
 };
 

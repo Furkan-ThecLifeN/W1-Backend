@@ -44,8 +44,11 @@ router.post("/google-signin", normalLimiter, safeHandler(authController.googleSi
 // Kullanıcı profilini getirme (Login sonrası token ile)
 router.get("/profile", verifyToken, normalLimiter, safeHandler(authController.getProfile));
 
-// Şifre sıfırlama isteği
+// ✅ GÜNCELLENDİ: Şifre sıfırlama "isteği" (Kod gönderir)
 router.post("/forgot-password", strictLimiter, safeHandler(authController.forgotPassword));
+
+// ✅ YENİ: Kod ile şifreyi "sıfırlama"
+router.post("/reset-password", strictLimiter, safeHandler(authController.resetPasswordWithCode));
 
 // ✅ Hesabı kalıcı olarak silme isteği
 router.post("/delete-account", verifyToken, strictLimiter, safeHandler(authController.requestAccountDeletion));

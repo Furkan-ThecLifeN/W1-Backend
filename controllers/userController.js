@@ -801,7 +801,7 @@ exports.followUser = async (req, res) => {
       createdAt: now,
     });
 
-    // Sadece takip hemen başlıyorsa istatistikleri güncelle
+    // ✅ Takip onaylandıysa istatistikleri güncelle
     if (followStatusToSet === "following") {
       batch.update(currentUserDoc.ref, {
         "stats.following": admin.firestore.FieldValue.increment(1),
@@ -819,6 +819,28 @@ exports.followUser = async (req, res) => {
         fromUsername: currentUserDoc.data().username || "Anonim",
         isRead: false,
       });
+
+      // 🧩 1️⃣ Takip gerçekleştiyse mesajlaşma alanı oluştur
+      const conversationId = [uid, targetUid].sort().join("_");
+      const conversationRef = db.collection("conversations").doc(conversationId);
+
+      const conversationData = {
+        members: [uid, targetUid],
+        createdAt: now,
+        updatedAt: now,
+        lastMessage: {
+          text: "Sohbet başlatıldı",
+          senderId: uid,
+          updatedAt: now,
+        },
+        conversationId,
+      };
+
+      // 🧩 2️⃣ Eğer sohbet daha önce yoksa oluştur
+      const existingConversation = await conversationRef.get();
+      if (!existingConversation.exists) {
+        batch.set(conversationRef, conversationData);
+      }
     } else if (followStatusToSet === "pending") {
       // 🔔 Bildirim ekle (takip isteği)
       batch.set(db.collection("users").doc(targetUid).collection("notifications").doc(), {
@@ -834,9 +856,8 @@ exports.followUser = async (req, res) => {
     await batch.commit();
 
     return res.status(200).json({
-      message: `Takip ${isTargetPrivate ? 'isteği gönderildi' : 'işlemi başarılı'}.`,
+      message: `Takip ${isTargetPrivate ? "isteği gönderildi" : "işlemi başarılı"}.`,
       status: followStatusToSet,
-      newStats: isTargetPrivate ? null : (await targetUserDoc.ref.get()).data().stats,
     });
   } catch (error) {
     console.error("Takip işlemi hatası:", error);
@@ -1695,7 +1716,7 @@ exports.getFollowers = async (req, res) => {
   }
 };
 
-// ✅ YENİ: Belirli bir kullanıcının takip ettiklerini getirme
+// ✅ YENİ: Belirli bir kullanıcının takip ettiklerini getirme (GÜNCELLENMİŞ)
 exports.getFollowing = async (req, res) => {
   try {
     const { targetUid } = req.params;
@@ -1713,6 +1734,7 @@ exports.getFollowing = async (req, res) => {
         .collection("follows")
         .where("followerUid", "==", currentUid)
         .where("followingUid", "==", targetUid)
+        .where("status", "==", "following") // ✅ Sadece takip ediyorsa...
         .get();
 
       if (isFollowing.empty) {
@@ -1725,14 +1747,19 @@ exports.getFollowing = async (req, res) => {
     const followingSnapshot = await db
       .collection("follows")
       .where("followerUid", "==", targetUid)
+      .where("status", "==", "following") // ✅✅✅ EKSİK OLAN KOD: Sadece onaylanmışları al
       .get();
 
     if (followingSnapshot.empty) {
       return res.status(200).json({ following: [] });
     }
 
-    const followingUids = followingSnapshot.docs.map((doc) => doc.data().followingUid);
-
+    const followingUids = followingSnapshot.docs.map(
+      (doc) => doc.data().followingUid
+    );
+    
+    // Not: Firestore 'in' sorgusu 30 UID ile sınırlıdır.
+    // Çok fazla takip edilen varsa, bu kodun parçalara ayrılması gerekebilir.
     const usersSnapshot = await db
       .collection("users")
       .where(admin.firestore.FieldPath.documentId(), "in", followingUids)
@@ -1751,6 +1778,7 @@ exports.getFollowing = async (req, res) => {
       .json({ error: "Takip edilenler listesi alınırken bir hata oluştu." });
   }
 };
+
 
 // ✅ YENİ: Kullanıcının bekleyen takip isteklerini getirme
 exports.getPendingRequests = async (req, res) => {
