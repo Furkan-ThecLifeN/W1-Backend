@@ -5,22 +5,21 @@ const validator = require("validator");
 const rateLimit = require("express-rate-limit");
 const getPostLink = require("../utils/getPostLink");
 
-
 const router = express.Router();
 const db = admin.firestore();
 
 // 🚀 Genel API Hız Sınırlayıcı (Rate Limiter)
 const apiLimiter = rateLimit({
-  windowMs: 1,   // 1 ms (önemsiz)
+  windowMs: 1, // 1 ms (önemsiz)
   max: Infinity, // Sınırsız istek hakkı
   standardHeaders: false,
   legacyHeaders: false,
-  message: "",   // Boş mesaj
+  message: "", // Boş mesaj
 });
 
 router.use(apiLimiter);
 
-// 🔒 Middleware: Token kontrolü
+// 🔒 Middleware: Token kontrolü (GEREKLİ ENDPOINT'LER İÇİN)
 async function verifyFirebaseToken(req, res, next) {
   try {
     const authHeader = req.headers.authorization || "";
@@ -76,7 +75,11 @@ async function createNotification(
     return; // Kullanıcı kendi postunu beğeniyorsa/yorum yapıyorsa bildirim oluşturma
   }
 
-  const notificationRef = db.collection("users").doc(postOwnerId).collection("notifications").doc();
+  const notificationRef = db
+    .collection("users")
+    .doc(postOwnerId)
+    .collection("notifications")
+    .doc();
   const newNotification = {
     type,
     fromUid,
@@ -103,7 +106,7 @@ router.post("/share", verifyFirebaseToken, async (req, res) => {
 
   if (!targetType || !targetId || !receiverUid) {
     return res.status(400).json({
-      error: "Eksik parametreler: targetType, targetId, receiverUid"
+      error: "Eksik parametreler: targetType, targetId, receiverUid",
     });
   }
 
@@ -218,11 +221,9 @@ router.delete(
       res.status(200).json({ ok: true, message: "Yorum başarıyla silindi." });
     } catch (error) {
       console.error("Yorum silme işlemi başarısız:", error);
-      res
-        .status(500)
-        .json({
-          error: error.message || "Yorum silme sırasında bir hata oluştu.",
-        });
+      res.status(500).json({
+        error: error.message || "Yorum silme sırasında bir hata oluştu.",
+      });
     }
   }
 );
@@ -257,7 +258,7 @@ router.post("/toggleLike", verifyFirebaseToken, async (req, res) => {
       const [likeSnap, targetSnap, likerUserSnap] = await Promise.all([
         t.get(likeRef),
         t.get(targetRef),
-        t.get(db.collection("users").doc(req.user.uid))
+        t.get(db.collection("users").doc(req.user.uid)),
       ]);
 
       if (!targetSnap.exists) throw new Error("target not found");
@@ -373,57 +374,87 @@ router.post("/toggleSave", verifyFirebaseToken, async (req, res) => {
   }
 });
 
-// 📌 Yeni Endpoint: Stats Getirme
-router.get(
-  "/getStats/:targetType/:targetId",
-  verifyFirebaseToken,
-  async (req, res) => {
-    try {
-      const { targetType, targetId } = req.params;
-      const cleanTargetId = sanitizeString(targetId);
-      const collectionName = mapCollection(targetType);
-      if (!collectionName)
-        return res.status(400).json({ error: "invalid targetType" });
+// ------------------------------------------------------------------
+// --- GÜNCELLENEN BÖLÜM BAŞLANGICI ---
+// ------------------------------------------------------------------
 
-      const targetRef = db.collection(collectionName).doc(cleanTargetId);
-      const targetSnap = await targetRef.get();
-      if (!targetSnap.exists) {
-        return res.status(404).json({ error: "target not found" });
+// 📌 Yeni Endpoint: Stats Getirme (HERKESE AÇIK OLARAK GÜNCELLENDİ)
+router.get("/getStats/:targetType/:targetId", async (req, res) => {
+  // verifyFirebaseToken kaldırıldı
+  try {
+    // --- 1. Opsiyonel Token Kontrolü ---
+    let userId = null;
+    let liked = false;
+    let saved = false;
+
+    const authHeader = req.headers.authorization || "";
+    const token = authHeader.startsWith("Bearer ")
+      ? authHeader.split("Bearer ")[1]
+      : null;
+
+    if (token) {
+      try {
+        // Token'ı doğrulamayı dene
+        const decoded = await admin.auth().verifyIdToken(token);
+        userId = decoded.uid;
+      } catch (err) {
+        // Token geçersizse veya süresi dolmuşsa sorun değil, public devam et
+        console.warn(
+          "getStats: Geçersiz/süresi dolmuş token, public veri dönülüyor."
+        );
       }
+    }
+    // --- Opsiyonel Token Kontrolü Bitti ---
 
-      const stats = targetSnap.data().stats || {
-        likes: 0,
-        comments: 0,
-        shares: 0,
-        saves: 0,
-      };
+    // --- 2. Herkese Açık Verileri Çek ---
+    const { targetType, targetId } = req.params;
+    const cleanTargetId = sanitizeString(targetId);
+    const collectionName = mapCollection(targetType);
+    if (!collectionName)
+      return res.status(400).json({ error: "invalid targetType" });
 
-      // Kullanıcının beğenme ve kaydetme durumlarını kontrol etme
+    const targetRef = db.collection(collectionName).doc(cleanTargetId);
+    const targetSnap = await targetRef.get();
+    if (!targetSnap.exists) {
+      return res.status(404).json({ error: "target not found" });
+    }
+
+    const stats = targetSnap.data().stats || {
+      likes: 0,
+      comments: 0,
+      shares: 0,
+      saves: 0,
+    };
+
+    // --- 3. Kullanıcı Giriş Yapmışsa Beğeni Durumunu Kontrol Et ---
+    if (userId) {
       const [likeSnap, saveSnap] = await Promise.all([
         db
           .collection("users")
-          .doc(req.user.uid)
+          .doc(userId) // req.user.uid yerine userId kullan
           .collection("likes")
           .doc(cleanTargetId)
           .get(),
         db
           .collection("users")
-          .doc(req.user.uid)
+          .doc(userId) // req.user.uid yerine userId kullan
           .collection("saves")
           .doc(cleanTargetId)
           .get(),
       ]);
 
-      const liked = likeSnap.exists;
-      const saved = saveSnap.exists;
-
-      return res.json({ ok: true, stats, liked, saved });
-    } catch (err) {
-      console.error("GetStatsFail:", err.message);
-      return res.status(500).json({ error: err.message });
+      liked = likeSnap.exists;
+      saved = saveSnap.exists;
     }
+    // --- Kullanıcı Kontrolü Bitti ---
+
+    // Herkese açık stats + (varsa) kullanıcıya özel liked/saved durumu
+    return res.json({ ok: true, stats, liked, saved });
+  } catch (err) {
+    console.error("GetStatsFail:", err.message);
+    return res.status(500).json({ error: err.message });
   }
-);
+});
 
 // ---------------------------------------------------
 // 📌 Yorum Ekle (GÜNCELLENDİ)
@@ -531,10 +562,10 @@ router.delete(
   }
 );
 
-// 📌 Yorum Listeleme (GÜNCELLENDİ)
+// 📌 Yorum Listeleme (HERKESE AÇIK OLARAK GÜNCELLENDİ)
 router.get(
   "/comments/:targetType/:targetId",
-  verifyFirebaseToken,
+  // verifyFirebaseToken kaldırıldı
   async (req, res) => {
     try {
       const { targetType, targetId } = req.params;
@@ -551,7 +582,7 @@ router.get(
       const snapshot = await commentsRef.get();
       const comments = snapshot.docs.map((doc) => {
         const data = doc.data() || {};
-        const { createdAt, ...rest } = data;
+        const { createdAt, ...rest } = data; // createdAt timestamp'ını client'a gönderme
         return { id: doc.id, ...rest };
       });
       return res.json({ ok: true, comments });
@@ -562,7 +593,10 @@ router.get(
   }
 );
 
-// ---------------------------------------------------
+// ------------------------------------------------------------------
+// --- GÜNCELLENEN BÖLÜM SONU ---
+// ------------------------------------------------------------------
+
 // 📌 Yeni Endpoint: Takip Edilen Kullanıcıları Getirme
 router.get("/following", verifyFirebaseToken, async (req, res) => {
   try {
