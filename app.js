@@ -27,7 +27,7 @@ const app = express();
 
 // ✅ HATA ÇÖZÜMÜ: Render.com gibi proxy sunucularda
 // express-rate-limit'in doğru çalışması için bu satır eklendi.
-app.set('trust proxy', 1);
+app.set("trust proxy", 1);
 
 const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) {
@@ -39,7 +39,8 @@ app.use("/uploads", express.static(uploadsDir));
 // ✅ CORS — Kullanıcının isteğine göre güncellendi
 const allowedOrigins = [
   "http://localhost:3000",
-  "https://w1-fawn.vercel.app/"
+  // HATA DÜZELTME: Tarayıcıdan gelen istekle (slash'sız)
+  "https://w1-fawn.vercel.app",
 ];
 
 app.use(helmet());
