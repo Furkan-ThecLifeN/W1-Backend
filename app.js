@@ -32,7 +32,7 @@ if (!fs.existsSync(uploadsDir)) {
 
 app.use("/uploads", express.static(uploadsDir));
 
-const allowedOrigins = ["http://localhost:3000", "https://w1-beta-one.vercel.app/"];
+const allowedOrigins = ["http://localhost:3000", "https://w1-fawn.vercel.app/"];
 
 app.use(helmet());
 app.use(express.json());
@@ -41,15 +41,16 @@ app.use(useragent.express());
 
 app.use(
   cors({
-    origin: function (origin, callback) {
-      if (!origin) return callback(null, true);
-      if (allowedOrigins.includes(origin)) {
-        return callback(null, true);
+    origin: (origin, callback) => {
+      const allowedOrigins = [
+        "http://localhost:3000",
+        "https://w1-fawn.vercel.app",
+        "https://w1-fawn.vercel.app/"
+      ];
+      if (!origin || allowedOrigins.some(o => origin.startsWith(o))) {
+        callback(null, true);
       } else {
-        callback(
-          new Error(`CORS policy: ${origin} erişime izin verilmedi`),
-          false
-        );
+        callback(new Error(`CORS policy: ${origin} erişime izin verilmedi`), false);
       }
     },
     credentials: true,
