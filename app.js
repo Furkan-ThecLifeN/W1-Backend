@@ -32,7 +32,12 @@ if (!fs.existsSync(uploadsDir)) {
 
 app.use("/uploads", express.static(uploadsDir));
 
-const allowedOrigins = ["http://localhost:3000", "https://w1-fawn.vercel.app/"];
+// ✅ CORS — kesin çözüm
+const allowedOrigins = [
+  "http://localhost:3000",
+  "https://w1-fawn.vercel.app",
+  "https://www.w1-fawn.vercel.app"
+];
 
 app.use(helmet());
 app.use(express.json());
@@ -42,14 +47,10 @@ app.use(useragent.express());
 app.use(
   cors({
     origin: (origin, callback) => {
-      const allowedOrigins = [
-        "http://localhost:3000",
-        "https://w1-fawn.vercel.app",
-        "https://w1-fawn.vercel.app/"
-      ];
       if (!origin || allowedOrigins.some(o => origin.startsWith(o))) {
         callback(null, true);
       } else {
+        console.log("❌ Engellenen Origin:", origin);
         callback(new Error(`CORS policy: ${origin} erişime izin verilmedi`), false);
       }
     },
@@ -64,7 +65,7 @@ app.use("/api/messages", messageRoutes);
 app.use("/api/feeds", feedsRoutes);
 app.use("/api/feelings", feelingsRoutes);
 app.use("/api/posts", postRoutes);
-app.use("/api/actions", actionsBtnRoutes); 
+app.use("/api/actions", actionsBtnRoutes);
 app.use("/api/reports", reportRoutes);
 
 // ✅ Batch endpoint ayrıca bağla
@@ -78,6 +79,6 @@ app.get("/", (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  console.log(`Server ${PORT} portunda çalışıyor`);
+  console.log(`✅ Server ${PORT} portunda çalışıyor`);
   startDeletionJob();
 });
