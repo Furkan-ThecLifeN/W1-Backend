@@ -25,6 +25,10 @@ const { startDeletionJob } = require("./cronJob");
 
 const app = express();
 
+// ✅ HATA ÇÖZÜMÜ: Render.com gibi proxy sunucularda
+// express-rate-limit'in doğru çalışması için bu satır eklendi.
+app.set('trust proxy', 1);
+
 const uploadsDir = path.join(__dirname, "uploads");
 if (!fs.existsSync(uploadsDir)) {
   fs.mkdirSync(uploadsDir);
@@ -47,6 +51,7 @@ app.use(useragent.express());
 app.use(
   cors({
     origin: (origin, callback) => {
+      // !origin (mesela Postman istekleri) veya izin verilen domainler
       if (!origin || allowedOrigins.some(o => origin.startsWith(o))) {
         callback(null, true);
       } else {
