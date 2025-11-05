@@ -32,7 +32,7 @@ if (!fs.existsSync(uploadsDir)) {
 
 app.use("/uploads", express.static(uploadsDir));
 
-const allowedOrigins = ["http://localhost:3000", "https://w1-beta-one.vercel.app"];
+const allowedOrigins = ["http://localhost:3000", "https://w1-beta-one.vercel.app/"];
 
 app.use(helmet());
 app.use(express.json());
