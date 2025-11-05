@@ -25,8 +25,8 @@ const { startDeletionJob } = require("./cronJob");
 
 const app = express();
 
-// ✅ HATA ÇÖZÜMÜ: Render.com'da express-rate-limit'in
-// düzgün çalışması için proxy'e güven.
+// ✅ HATA ÇÖZÜMÜ: Render.com gibi proxy sunucularda
+// express-rate-limit'in doğru çalışması için bu satır eklendi.
 app.set('trust proxy', 1);
 
 const uploadsDir = path.join(__dirname, "uploads");
@@ -36,7 +36,7 @@ if (!fs.existsSync(uploadsDir)) {
 
 app.use("/uploads", express.static(uploadsDir));
 
-// ✅ İzin verilen adresler (sizin listeniz)
+// ✅ CORS — Kullanıcının isteğine göre güncellendi
 const allowedOrigins = [
   "http://localhost:3000",
   "https://w1-fawn.vercel.app/"
@@ -47,17 +47,15 @@ app.use(express.json());
 app.use(requestIp.mw());
 app.use(useragent.express());
 
-// ✅ CORS ayarları (sizin mantığınız + syntax düzeltmesi)
 app.use(
   cors({
+    // Kullanıcının istediği 'includes' mantığı (syntax hatası düzeltildi)
     origin: function (origin, callback) {
-      // !origin (Postman, curl vb. istekler için)
-      if (!origin) return callback(null, true);
-      
+      if (!origin) return callback(null, true); // Postman vb. için
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       } else {
-        // Düzeltme: Hata mesajı için backtick (`) kullanıldı
+        // HATA DÜZELTME: Template literal (`) eklendi
         callback(
           new Error(`CORS policy: ${origin} erişime izin verilmedi`),
           false
@@ -83,15 +81,13 @@ app.post("/api/actions/batch", verifyFirebaseToken, batchActionsController);
 
 app.use(express.static("public"));
 
-// ✅ Root route
 app.get("/", (req, res) => {
   res.send("API çalışıyor!");
 });
 
-// ✅ Server başlatma
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  // Düzeltme: Konsol log'u için backtick (`) kullanıldı
+  // HATA DÜZELTME: Template literal (`) eklendi
   console.log(`Server ${PORT} portunda çalışıyor`);
   startDeletionJob();
 });
