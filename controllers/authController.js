@@ -282,6 +282,7 @@ exports.login = async (req, res) => {
   let userEmail;
 
   try {
+    // 1. E-posta veya Kullanıcı Adı Çözümlemesi
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (emailRegex.test(identifier)) {
       userEmail = identifier;
@@ -299,16 +300,16 @@ exports.login = async (req, res) => {
 
     const userRecord = await getAuth().getUserByEmail(userEmail);
 
-    // Firebase REST API ile şifre doğrulaması
-    // 
-    // ***** 🚨 DÜZELTME BURADA YAPILDI 🚨 *****
+    // 2. Firebase REST API ile Şifre Doğrulaması
+
+    // ***** 🚨 KALICI ÇÖZÜM 1: API ANAHTARI DÜZELTMESİ 🚨 *****
     // "REACT_APP_REACT_APP_FIREBASE_API_KEY" -> "REACT_APP_FIREBASE_API_KEY" olarak düzeltildi.
-    const apiKey = process.env.REACT_APP_FIREBASE_API_KEY; 
-    // ***** 🚨 DÜZELTME BURADA YAPILDI 🚨 *****
+    const apiKey = process.env.REACT_APP_FIREBASE_API_KEY;
+    // ***** 🚨 KALICI ÇÖZÜM 1: BİTTİ 🚨 *****
     
     if (!apiKey) {
       console.error("FIREBASE_API_KEY ortam değişkeni bulunamadı!");
-      throw new Error("Sunucu yapılandırma hatası.");
+      throw new Error("Sunucu yapılandırma hatası: API Key eksik.");
     }
 
     const restApiUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
@@ -332,11 +333,11 @@ exports.login = async (req, res) => {
       ) {
         return res.status(403).json({ error: "Geçersiz email veya şifre." });
       }
-      // API Key hatası gibi diğer hataları fırlat
-      throw new Error(restApiData.error.message); 
+      // "API key not valid" gibi diğer hataları fırlat
+      throw new Error(restApiData.error.message);
     }
 
-    // Eğer kullanıcı dondurulmuşsa, aktif hale getir
+    // 3. Hesap Durumu Kontrolleri (Dondurulmuş/Silinme Bekleyen)
     if (userRecord.disabled) {
       console.log(
         `Dondurulmuş hesap algılandı. Yeniden aktif ediliyor: ${userRecord.email}`
@@ -348,7 +349,6 @@ exports.login = async (req, res) => {
         .update({ isFrozen: false });
     }
 
-    // ✅ GÜNCELLEME: Eğer hesap silinme beklemedeyse, işlemi iptal et
     const userDoc = await db.collection("users").doc(userRecord.uid).get();
     if (userDoc.exists && userDoc.data().isPendingDeletion) {
       console.log(
@@ -358,28 +358,49 @@ exports.login = async (req, res) => {
       await sendDeletionCanceledEmail(userRecord.email);
     }
 
-    // Başarılı girişten sonra cihaz bilgilerini kaydet
-    // (app.js'de middleware'leri kurduğunuz için bu kod artık çalışmalı)
-    const ipAddress = req.clientIp;
-    const userAgentString = req.useragent.source;
-    await userController.saveLoginDevice(
-      userRecord.uid,
-      ipAddress,
-      userAgentString
-    );
+    // 4. Cihaz Bilgilerini Kaydetme
+    
+    // ***** 🚨 KALICI ÇÖZÜM 2: CİHAZ KAYDETME DÜZELTMESİ 🚨 *****
+    // Hatalı `userController.saveLoginDevice` çağrısı kaldırıldı.
+    // Mantık, çökmemesi için doğrudan ve güvenli bir şekilde buraya taşındı.
+    try {
+      const ipAddress = req.clientIp;
+      const userAgentString = req.useragent.source;
 
-    // Custom token oluşturma
+      const userDevicesRef = db
+        .collection("users")
+        .doc(userRecord.uid)
+        .collection("loginDevices");
+
+      await userDevicesRef.add({
+        ipAddress: ipAddress || null,
+        userAgent: userAgentString || null,
+        lastLogin: FieldValue.serverTimestamp(),
+      });
+      console.log(`Cihaz bilgisi kaydedildi: ${userRecord.uid}`);
+    } catch (deviceError) {
+      // ÖNEMLİ: Cihaz kaydı başarısız olsa bile GİRİŞ işlemi başarısız olmamalı.
+      // Bu yüzden hatayı sadece konsola yazdırıyoruz.
+      console.error(
+        "Giriş başarılı ANCAK cihaz kaydetme hatası:",
+        deviceError
+      );
+    }
+    // ***** 🚨 KALICI ÇÖZÜM 2: BİTTİ 🚨 *****
+
+    // 5. Custom Token Oluşturma ve Gönderme
     const customToken = await getAuth().createCustomToken(userRecord.uid);
-
     return res.status(200).json({ token: customToken });
+
   } catch (error) {
+    // 6. Genel Hata Yakalama
     console.error("Giriş sırasında hata:", error);
     if (error.code === "auth/user-not-found") {
       return res.status(403).json({ error: "Geçersiz email veya şifre." });
     }
     return res.status(500).json({
-      error: "Giriş sırasında bir hata oluştu.",
-      details: error.message, // Hata mesajını (örn: "API key not valid...") frontend'e gönder
+      error: "Giriş sırasında sunucuda bir hata oluştu.",
+      details: error.message, // "API key not valid" vb.
     });
   }
 };
