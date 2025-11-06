@@ -300,7 +300,17 @@ exports.login = async (req, res) => {
     const userRecord = await getAuth().getUserByEmail(userEmail);
 
     // Firebase REST API ile şifre doğrulaması
-    const apiKey = process.env.REACT_APP_REACT_APP_FIREBASE_API_KEY;
+    // 
+    // ***** 🚨 DÜZELTME BURADA YAPILDI 🚨 *****
+    // "REACT_APP_REACT_APP_FIREBASE_API_KEY" -> "REACT_APP_FIREBASE_API_KEY" olarak düzeltildi.
+    const apiKey = process.env.REACT_APP_FIREBASE_API_KEY; 
+    // ***** 🚨 DÜZELTME BURADA YAPILDI 🚨 *****
+    
+    if (!apiKey) {
+      console.error("FIREBASE_API_KEY ortam değişkeni bulunamadı!");
+      throw new Error("Sunucu yapılandırma hatası.");
+    }
+
     const restApiUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
     const restApiResponse = await fetch(restApiUrl, {
       method: "POST",
@@ -322,7 +332,8 @@ exports.login = async (req, res) => {
       ) {
         return res.status(403).json({ error: "Geçersiz email veya şifre." });
       }
-      throw new Error(restApiData.error.message);
+      // API Key hatası gibi diğer hataları fırlat
+      throw new Error(restApiData.error.message); 
     }
 
     // Eğer kullanıcı dondurulmuşsa, aktif hale getir
@@ -348,6 +359,7 @@ exports.login = async (req, res) => {
     }
 
     // Başarılı girişten sonra cihaz bilgilerini kaydet
+    // (app.js'de middleware'leri kurduğunuz için bu kod artık çalışmalı)
     const ipAddress = req.clientIp;
     const userAgentString = req.useragent.source;
     await userController.saveLoginDevice(
@@ -367,7 +379,7 @@ exports.login = async (req, res) => {
     }
     return res.status(500).json({
       error: "Giriş sırasında bir hata oluştu.",
-      details: error.message,
+      details: error.message, // Hata mesajını (örn: "API key not valid...") frontend'e gönder
     });
   }
 };
