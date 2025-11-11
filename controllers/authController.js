@@ -1,5 +1,4 @@
 // controllers/authController.js
-
 const { auth, db } = require("../config/firebase");
 const {
   isValidEmail,
@@ -26,8 +25,6 @@ const transporter = nodemailer.createTransport({
 
 // Google OAuth2Client
 const googleClient = new OAuth2Client(process.env.GOOGLE_CLIENT_ID);
-
-
 
 // --- YENİ YARDIMCI FONKSİYONLAR BURAYA EKLENDİ ---
 
@@ -268,11 +265,9 @@ exports.registerUser = async (req, res) => {
   }
 };
 
-
-// Kullanıcı Girişi
+// YENİ VE GÜVENİLİR GİRİŞ FONKSİYONU
 exports.login = async (req, res) => {
   const { identifier, password } = req.body;
-
   if (!identifier || !password) {
     return res
       .status(400)
@@ -280,40 +275,95 @@ exports.login = async (req, res) => {
   }
 
   let userEmail;
+  let uid;
+  let userRecord;
 
+  // --- Adım 1: E-posta adresini çözme (Identifier -> Email) ---
   try {
-    // 1. E-posta veya Kullanıcı Adı Çözümlemesi
     const emailRegex = /^[^\s@]+@[^\s@]+\.[^\s@]+$/;
     if (emailRegex.test(identifier)) {
       userEmail = identifier;
+      console.log(`[Login] Adım 1: E-posta ile giriş denemesi: ${userEmail}`);
     } else {
+      console.log(
+        `[Login] Adım 1: Kullanıcı adı ile giriş denemesi: ${identifier}`
+      );
       const usernameSnapshot = await db
         .collection("users")
         .where("username", "==", identifier)
         .limit(1)
         .get();
+
       if (usernameSnapshot.empty) {
-        return res.status(404).json({ error: "Kullanıcı bulunamadı." });
+        // GÜVENLİK NOTU: "Kullanıcı bulunamadı" demek yerine, şifre yanlışmış gibi
+        // davranmak "user enumeration" saldırılarını engeller.
+        console.log(`[Login] Adım 1 HATA: Kullanıcı adı bulunamadı: ${identifier}`);
+        return res.status(403).json({ error: "Geçersiz kimlik bilgileri." });
       }
       userEmail = usernameSnapshot.docs[0].data().email;
+      uid = usernameSnapshot.docs[0].data().uid;
+      console.log(
+        `[Login] Adım 1 BAŞARILI: Kullanıcı adı çözüldü: ${identifier} -> ${userEmail}`
+      );
+    }
+  } catch (err) {
+    console.error("[Login] Adım 1 KRİTİK HATA (DB Query):", err);
+    return res
+      .status(500)
+      .json({ error: "Giriş sırasında sunucu hatası (Adım 1)." });
+  }
+
+  // --- Adım 2: Firebase Auth'da kullanıcının varlığını doğrulama ---
+  try {
+    // Eğer UID'yi username aramasından almadıysak, email ile alalım.
+    if (uid) {
+      userRecord = await auth.getUser(uid); // UID varsa bu daha hızlı.
+    } else {
+      userRecord = await auth.getUserByEmail(userEmail);
+      uid = userRecord.uid; // UID'yi buradan al
     }
 
-    const userRecord = await getAuth().getUserByEmail(userEmail);
+    if (userRecord.disabled) {
+      console.log(
+        `[Login] Adım 2 HATA: Hesap dondurulmuş: ${userEmail}`
+      );
+      return res.status(403).json({ error: "Bu hesap dondurulmuştur." });
+    }
+    console.log(`[Login] Adım 2 BAŞARILI: Firebase Auth kaydı bulundu: ${uid}`);
 
-    // 2. Firebase REST API ile Şifre Doğrulaması
+  } catch (error) {
+    if (error.code === "auth/user-not-found") {
+      console.log(
+        `[Login] Adım 2 HATA: Kullanıcı Auth'da bulunamadı: ${userEmail}`
+      );
+    } else {
+      console.error("[Login] Adım 2 KRİTİK HATA (Auth Query):", error);
+    }
+    // Sebep ne olursa olsun, kullanıcıya standart hatayı dön
+    return res.status(403).json({ error: "Geçersiz kimlik bilgileri." });
+  }
 
-    // ***** 🚨 KALICI ÇÖZÜM 1: API ANAHTARI DÜZELTMESİ 🚨 *****
-    // "REACT_APP_REACT_APP_FIREBASE_API_KEY" -> "REACT_APP_FIREBASE_API_KEY" olarak düzeltildi.
+  // --- Adım 3: Şifre Doğrulama (Firebase REST API) ---
+  let data;
+  try {
+    // !!! EN ÖNEMLİ DÜZELTME BURADA !!!
+    // Diğer fonksiyonda (requestAccountDeletion) 'REACT_APP_FIREBASE_API_KEY' kullanmışsınız.
+    // Tutarlılık için burada da onu kullanıyoruz.
     const apiKey = process.env.REACT_APP_FIREBASE_API_KEY;
-    // ***** 🚨 KALICI ÇÖZÜM 1: BİTTİ 🚨 *****
-    
+
     if (!apiKey) {
-      console.error("FIREBASE_API_KEY ortam değişkeni bulunamadı!");
-      throw new Error("Sunucu yapılandırma hatası: API Key eksik.");
+      // Bu log Render'da görünürse, sorun %100 budur.
+      console.error(
+        "!!!! [Login] Adım 3 KRİTİK HATA !!!!: REACT_APP_FIREBASE_API_KEY environment değişkeni bulunamadı. Render.com'da bu değişkeni tanımladınız mı?"
+      );
+      return res
+        .status(500)
+        .json({ error: "Sunucu yapılandırma hatası: API Key eksik." });
     }
 
-    const restApiUrl = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
-    const restApiResponse = await fetch(restApiUrl, {
+    const url = `https://identitytoolkit.googleapis.com/v1/accounts:signInWithPassword?key=${apiKey}`;
+
+    const response = await fetch(url, {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
@@ -323,85 +373,63 @@ exports.login = async (req, res) => {
       }),
     });
 
-    const restApiData = await restApiResponse.json();
+    data = await response.json();
 
-    if (!restApiResponse.ok) {
-      if (
-        restApiData.error &&
-        (restApiData.error.message === "INVALID_PASSWORD" ||
-          restApiData.error.message === "EMAIL_NOT_FOUND")
-      ) {
-        return res.status(403).json({ error: "Geçersiz email veya şifre." });
-      }
-      // "API key not valid" gibi diğer hataları fırlat
-      throw new Error(restApiData.error.message);
-    }
-
-    // 3. Hesap Durumu Kontrolleri (Dondurulmuş/Silinme Bekleyen)
-    if (userRecord.disabled) {
-      console.log(
-        `Dondurulmuş hesap algılandı. Yeniden aktif ediliyor: ${userRecord.email}`
+    // Hata kontrolü 'response.ok' ile yapılır.
+    if (!response.ok) {
+      // Firebase'den gelen asıl hata mesajını (INVALID_LOGIN_CREDENTIALS) sunucu loguna yazdır.
+      const errorMessage = data.error ? data.error.message : "Bilinmeyen API hatası";
+      console.error(
+        `[Login] Adım 3 HATA: Firebase REST API hatası (${userEmail}): ${errorMessage}`
       );
-      await getAuth().updateUser(userRecord.uid, { disabled: false });
-      await db
-        .collection("users")
-        .doc(userRecord.uid)
-        .update({ isFrozen: false });
+      // Gelen hata kodu ne olursa olsun, kullanıcıya her zaman "Geçersiz kimlik bilgileri" dön.
+      return res.status(403).json({ error: "Geçersiz kimlik bilgileri." });
     }
 
-    const userDoc = await db.collection("users").doc(userRecord.uid).get();
+    console.log(
+      `[Login] Adım 3 BAŞARILI: Firebase REST API ile şifre doğrulandı: ${userEmail}`
+    );
+
+  } catch (err) {
+    console.error("[Login] Adım 3 KRİTİK HATA (Fetch):", err);
+    return res
+      .status(500)
+      .json({ error: "Giriş sırasında sunucu hatası (Adım 3)." });
+  }
+
+  // --- Adım 4: Başarılı Giriş İşlemleri (Cihaz Kaydı ve Token Oluşturma) ---
+  try {
+    // Cihaz kaydetme
+    await db.collection("users").doc(uid).collection("loginDevices").add({
+      ipAddress: req.clientIp || null,
+      userAgent: req.useragent.source || null,
+      lastLogin: FieldValue.serverTimestamp(),
+    });
+    console.log(`[Login] Adım 4: Cihaz kaydedildi: ${uid}`);
+
+    // Custom token oluştur
+    const customToken = await auth.createCustomToken(uid);
+    console.log(`[Login] Adım 4: Custom token oluşturuldu: ${uid}`);
+
+    // Eğer hesap silinme beklemedeyse, iptal et
+    const userDoc = await db.collection("users").doc(uid).get();
     if (userDoc.exists && userDoc.data().isPendingDeletion) {
       console.log(
-        `Silinme beklemesindeki hesap tekrar giriş yaptı. Silme işlemi iptal ediliyor: ${userRecord.email}`
+        `[Login] Silinme beklemesindeki hesap giriş yaptı. İptal ediliyor: ${userEmail}`
       );
-      await this.cancelAccountDeletion(userRecord.uid);
-      await sendDeletionCanceledEmail(userRecord.email);
+      // 'this' yerine 'exports' kullanarak aynı dosyadaki diğer fonksiyonu çağır
+      await exports.cancelAccountDeletion(uid);
+      await sendDeletionCanceledEmail(userEmail); // Bu fonksiyon aynı dosyada tanımlı
     }
 
-    // 4. Cihaz Bilgilerini Kaydetme
-    
-    // ***** 🚨 KALICI ÇÖZÜM 2: CİHAZ KAYDETME DÜZELTMESİ 🚨 *****
-    // Hatalı `userController.saveLoginDevice` çağrısı kaldırıldı.
-    // Mantık, çökmemesi için doğrudan ve güvenli bir şekilde buraya taşındı.
-    try {
-      const ipAddress = req.clientIp;
-      const userAgentString = req.useragent.source;
-
-      const userDevicesRef = db
-        .collection("users")
-        .doc(userRecord.uid)
-        .collection("loginDevices");
-
-      await userDevicesRef.add({
-        ipAddress: ipAddress || null,
-        userAgent: userAgentString || null,
-        lastLogin: FieldValue.serverTimestamp(),
-      });
-      console.log(`Cihaz bilgisi kaydedildi: ${userRecord.uid}`);
-    } catch (deviceError) {
-      // ÖNEMLİ: Cihaz kaydı başarısız olsa bile GİRİŞ işlemi başarısız olmamalı.
-      // Bu yüzden hatayı sadece konsola yazdırıyoruz.
-      console.error(
-        "Giriş başarılı ANCAK cihaz kaydetme hatası:",
-        deviceError
-      );
-    }
-    // ***** 🚨 KALICI ÇÖZÜM 2: BİTTİ 🚨 *****
-
-    // 5. Custom Token Oluşturma ve Gönderme
-    const customToken = await getAuth().createCustomToken(userRecord.uid);
+    // Her şey tamamsa, token'ı kullanıcıya gönder
     return res.status(200).json({ token: customToken });
 
-  } catch (error) {
-    // 6. Genel Hata Yakalama
-    console.error("Giriş sırasında hata:", error);
-    if (error.code === "auth/user-not-found") {
-      return res.status(403).json({ error: "Geçersiz email veya şifre." });
-    }
-    return res.status(500).json({
-      error: "Giriş sırasında sunucuda bir hata oluştu.",
-      details: error.message, // "API key not valid" vb.
-    });
+  } catch (err) {
+    console.error("[Login] Adım 4 KRİTİK HATA (Token/DB):", err);
+    return res
+      .status(500)
+      .json({ error: "Giriş sonrası işlem hatası (Adım 4)." });
   }
 };
 
