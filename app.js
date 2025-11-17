@@ -39,8 +39,8 @@ app.use("/uploads", express.static(uploadsDir));
 // ✅ CORS — Kullanıcının isteğine göre güncellendi
 const allowedOrigins = [
   "http://localhost:3000",
-  // HATA DÜZELTME: Tarayıcıdan gelen istekle (slash'sız)
   "https://w1-fawn.vercel.app",
+  "https://www.wone-quantumtag.com",
 ];
 
 app.use(helmet());
