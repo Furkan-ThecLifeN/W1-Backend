@@ -66,7 +66,6 @@ router.get("/devices", verifyToken, getLoginDevices);
 // 🔒 Gizlilik ve Ayarlar
 // ===========================================
 router.patch("/privacy", verifyToken, updatePrivacySettings);
-router.get("/:id/privacy", getPrivacySettings);
 router.patch("/privacy/messages", verifyToken, updateMessagesPrivacy);
 router.patch("/privacy/storyReplies", verifyToken, updateStoryRepliesPrivacy);
 router.patch("/settings/hide-likes", verifyToken, updateHideLikesSetting);
@@ -146,5 +145,8 @@ router.delete(
   verifyToken,
   removeCloseFriend
 );
+
+
+router.get("/:id/privacy", getPrivacySettings);
 
 module.exports = router;

@@ -41,7 +41,9 @@ const allowedOrigins = [
   "http://localhost:3000",
   "https://w1-fawn.vercel.app",
   "https://www.wone-quantumtag.com",
+  "https://wone-quantumtag.com"
 ];
+
 
 app.use(helmet());
 app.use(express.json());

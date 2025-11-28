@@ -4,25 +4,35 @@ const { getYouTubeEmbedUrl } = require("../utils/mediaHelpers");
 // Feed oluşturma
 exports.createFeed = async (req, res) => {
   if (!req.user?.uid) {
-    return res
-      .status(401)
-      .json({ error: "Yetkilendirme hatası. Lütfen giriş yapın." });
+    return res.status(401).json({ error: "Yetkilendirme hatası." });
   }
 
-  const { postText, mediaUrl, ownershipAccepted, images, privacy } = req.body; 
+  // Frontend'den artık 'rulesAccepted' geliyor olabilir, eski versiyonlar için 'ownershipAccepted'ı da kontrol et.
+  const { postText, mediaUrl, ownershipAccepted, rulesAccepted, images, privacy } = req.body; 
   const userId = req.user.uid;
 
-  if (!mediaUrl || !ownershipAccepted) {
+  // Hangi değişken geldiyse onu kabul et
+  const isAccepted = rulesAccepted || ownershipAccepted;
+
+  // 1. KURAL: Onay kontrolü
+  if (!mediaUrl || !isAccepted) {
     return res
       .status(400)
-      .json({ error: "Video URL'si ve sahiplik onayı gerekli." });
+      .json({ error: "Video URL'si ve paylaşım kuralları onayı gereklidir." });
+  }
+
+  // 2. KURAL: Düşük Değerli İçerik (Low Value Content) Kontrolü
+  // AdSense onayı için sunucu tarafında da bu kontrolü yapıyoruz.
+  const MIN_TEXT_LENGTH = 150; 
+  if (!postText || postText.trim().length < MIN_TEXT_LENGTH) {
+      return res.status(400).json({ 
+          error: `İçerik kalitesi için açıklama en az ${MIN_TEXT_LENGTH} karakter olmalıdır.` 
+      });
   }
 
   const embedUrl = getYouTubeEmbedUrl(mediaUrl);
   if (!embedUrl) {
-    return res
-      .status(400)
-      .json({ error: "Geçerli bir YouTube Shorts URL'si değil." });
+    return res.status(400).json({ error: "Geçerli bir YouTube Shorts URL'si değil." });
   }
 
   try {
@@ -40,30 +50,25 @@ exports.createFeed = async (req, res) => {
       ownerId: userId,
       username: userData.username || "unknown_user",
       displayName: userData.displayName || "Kullanıcı",
-      userProfileImage:
-        userData.photoURL ||
-        "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png",
+      userProfileImage: userData.photoURL || "default_avatar_url...",
       photoURL: userData.photoURL || "",
       text: postText || "",
-      content: postText || "",
+      content: postText || "", // Yedek alan
       mediaUrl: embedUrl,
-      ownershipAccepted: ownershipAccepted,
+      
+      // Veritabanına artık "Sahiplik" değil "Kural Onayı" olarak kaydediyoruz
+      rulesAccepted: true, 
+      isOriginalContent: false, // Bu bir embed olduğu için false işaretliyoruz (Analiz için faydalı)
+      
       privacy: privacy || "public",
       images: images || [],
       stats: {
-        comments: 0,
-        likes: 0,
-        shares: 0,
-        saves: 0,
+        comments: 0, likes: 0, shares: 0, saves: 0,
       },
       commentsDisabled: false,
     };
 
-    const newFeedRef = db
-      .collection("users")
-      .doc(userId)
-      .collection("feeds")
-      .doc();
+    const newFeedRef = db.collection("users").doc(userId).collection("feeds").doc();
     const newGlobalFeedRef = db.collection("globalFeeds").doc(newFeedRef.id);
 
     const batch = db.batch();
@@ -79,9 +84,7 @@ exports.createFeed = async (req, res) => {
       "stats.posts": FieldValue.increment(1),
     });
 
-    res
-      .status(201)
-      .json({ message: "Feed başarıyla paylaşıldı.", postId: newFeedRef.id });
+    res.status(201).json({ message: "Feed başarıyla paylaşıldı.", postId: newFeedRef.id });
   } catch (error) {
     console.error("Feed oluşturma hatası:", error);
     res.status(500).json({ error: "Sunucu hatası: " + error.message });
