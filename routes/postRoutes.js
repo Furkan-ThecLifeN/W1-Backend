@@ -20,40 +20,33 @@ const storage = multer.diskStorage({
     cb(null, path.join(__dirname, "../uploads"));
   },
   filename: (req, file, cb) => {
-    const uniqueName = Date.now() + "-" + file.originalname;
+    // Türkçe karakter ve boşluk temizliği yaparak dosya adı oluşturma
+    const safeName = file.originalname.replace(/[^a-zA-Z0-9.]/g, "_");
+    const uniqueName = Date.now() + "-" + safeName;
     cb(null, uniqueName);
   },
 });
-const upload = multer({ storage });
+
+// Resim ve Video kabul edecek şekilde upload tanımı
+const upload = multer({ 
+  storage,
+  limits: { fileSize: 50 * 1024 * 1024 } // Örn: 50MB limit (video için artırıldı)
+});
 
 // ✅ Gönderi paylaşım rotası
+// "media" alanı hem resim hem video dosyaları için kullanılacak
 router.post(
   "/share",
   isAuthenticated,
   apiLimiter,
-  upload.array("images", 5),
+  upload.array("media", 5), // Frontend'den 'media' key'i ile gönderiyoruz
   postController.sharePost
 );
 
-// ✅ Yeni: Gönderi silme rotası (sadece gönderi sahibi silebilir)
+// Diğer rotalar aynı kalıyor...
 router.delete("/:postId", isAuthenticated, postController.deletePost);
-
-// ✅ Yeni: Yorumları kapatma rotası (sadece gönderi sahibi yapabilir)
-router.patch(
-  "/:postId/disable-comments",
-  isAuthenticated,
-  postController.disableComments
-);
-
-// ✅ Yeni: Yorumları açma rotası
-router.patch(
-  "/:postId/enable-comments",
-  isAuthenticated,
-  postController.enableComments
-);
-
-// ✅ Yeni: Gönderi raporlama rotası (herkes raporlayabilir)
-// Not: `reportController.createReport` fonksiyonunu kullanır.
+router.patch("/:postId/disable-comments", isAuthenticated, postController.disableComments);
+router.patch("/:postId/enable-comments", isAuthenticated, postController.enableComments);
 router.post("/report", isAuthenticated, reportController.createReport);
 
 module.exports = router;

@@ -2,7 +2,7 @@
 const { db, FieldValue } = require("../config/firebase");
 
 /**
- * Kullanıcının resim veya yazı içeren gönderi paylaşmasını sağlar.
+ * Kullanıcının resim veya VIDEO içeren gönderi paylaşmasını sağlar.
  * Gönderi hem kullanıcının özel koleksiyonuna hem de genel akışa kaydedilir.
  */
 exports.sharePost = async (req, res) => {
@@ -10,22 +10,32 @@ exports.sharePost = async (req, res) => {
     return res.status(401).json({ error: "Yetkilendirme hatası. Lütfen giriş yapın." });
   }
 
-  const { caption, privacy, imageUrls: bodyImageUrls } = req.body;
+  // Frontend'den gelen verileri alıyoruz.
+  // Not: Frontend artık 'mediaType' (video/image) ve 'mediaUrls' gönderebilir.
+  const { caption, privacy, mediaUrls: bodyMediaUrls, mediaType } = req.body;
   const uid = req.user.uid;
 
-  let imageUrls = [];
-  if (Array.isArray(bodyImageUrls)) {
-    imageUrls = bodyImageUrls;
+  // Medya URL'lerini topluyoruz (Hem string URL olarak gelenler hem de dosya olarak yüklenenler)
+  let finalMediaUrls = [];
+  
+  // 1. Body'den gelen URL'leri işle (String veya Array olabilir)
+  if (Array.isArray(bodyMediaUrls)) {
+    finalMediaUrls = bodyMediaUrls;
+  } else if (bodyMediaUrls) {
+    finalMediaUrls = [bodyMediaUrls];
   }
+
+  // 2. Multer ile yüklenen dosyaları işle (Eğer dosya yüklenmişse)
   if (req.files?.length > 0) {
     const uploadedUrls = req.files.map(
       (file) => `${req.protocol}://${req.get("host")}/uploads/${file.filename}`
     );
-    imageUrls = [...imageUrls, ...uploadedUrls];
+    finalMediaUrls = [...finalMediaUrls, ...uploadedUrls];
   }
 
-  if (!caption?.trim() && imageUrls.length === 0) {
-    return res.status(400).json({ error: "Gönderi metni veya en az bir görsel gereklidir." });
+  // Validasyon: Ne metin var ne de medya varsa hata ver
+  if (!caption?.trim() && finalMediaUrls.length === 0) {
+    return res.status(400).json({ error: "Gönderi metni veya en az bir medya (resim/video) gereklidir." });
   }
 
   try {
@@ -43,7 +53,14 @@ exports.sharePost = async (req, res) => {
       displayName: userData.displayName || "Kullanıcı",
       photoURL: userData.photoURL || "https://cdn.pixabay.com/photo/2015/10/05/22/37/blank-profile-picture-973460_960_720.png",
       caption: caption || "",
-      imageUrls,
+      
+      // ✅ YENİ: Hem genel medya alanı hem de tipini kaydediyoruz
+      mediaUrls: finalMediaUrls,
+      mediaType: mediaType || "image", // Frontend göndermezse varsayılan 'image'
+      
+      // Geriye dönük uyumluluk (Eski bileşenler bozulmasın diye imageUrls'u de dolduruyoruz)
+      imageUrls: finalMediaUrls, 
+      
       privacy: privacy || "public",
       createdAt: FieldValue.serverTimestamp(),
       stats: {
