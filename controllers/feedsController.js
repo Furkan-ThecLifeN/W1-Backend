@@ -1,119 +1,125 @@
-const { db, FieldValue } = require("../config/firebase");
+// controllers/feedsController.js
+const { db, admin } = require("../config/firebase");
+const { FieldValue } = require("firebase-admin/firestore");
 const { getYouTubeEmbedUrl } = require("../utils/mediaHelpers");
 
-// Feed oluşturma
+/**
+ * 1. FEED OLUŞTURMA
+ */
 exports.createFeed = async (req, res) => {
-  if (!req.user?.uid) {
-    return res.status(401).json({ error: "Yetkilendirme hatası." });
-  }
-
-  // Frontend'den artık 'rulesAccepted' geliyor olabilir, eski versiyonlar için 'ownershipAccepted'ı da kontrol et.
-  const { postText, mediaUrl, ownershipAccepted, rulesAccepted, images, privacy } = req.body; 
-  const userId = req.user.uid;
-
-  // Hangi değişken geldiyse onu kabul et
-  const isAccepted = rulesAccepted || ownershipAccepted;
-
-  // 1. KURAL: Onay kontrolü
-  if (!mediaUrl || !isAccepted) {
-    return res
-      .status(400)
-      .json({ error: "Video URL'si ve paylaşım kuralları onayı gereklidir." });
-  }
-
-  // 2. KURAL: Düşük Değerli İçerik (Low Value Content) Kontrolü
-  // AdSense onayı için sunucu tarafında da bu kontrolü yapıyoruz.
-  const MIN_TEXT_LENGTH = 150; 
-  if (!postText || postText.trim().length < MIN_TEXT_LENGTH) {
-      return res.status(400).json({ 
-          error: `İçerik kalitesi için açıklama en az ${MIN_TEXT_LENGTH} karakter olmalıdır.` 
-      });
-  }
-
-  const embedUrl = getYouTubeEmbedUrl(mediaUrl);
-  if (!embedUrl) {
-    return res.status(400).json({ error: "Geçerli bir YouTube Shorts URL'si değil." });
-  }
-
   try {
-    const userDoc = await db.collection("users").doc(userId).get();
-    if (!userDoc.exists) {
-      return res.status(404).json({ error: "Kullanıcı bulunamadı." });
+    if (!req.user?.uid) return res.status(401).json({ error: "Yetkilendirme hatası." });
+
+    const { postText, mediaUrl, ownershipAccepted, rulesAccepted, images, privacy } = req.body; 
+    const userId = req.user.uid;
+
+    const isAccepted = rulesAccepted || ownershipAccepted;
+
+    // --- Validasyonlar ---
+    // 1. URL ve Onay Kontrolü
+    if (!mediaUrl || !isAccepted) {
+      return res.status(400).json({ error: "Video URL'si ve kural onayı gereklidir." });
     }
+
+    // 2. YouTube Embed Kontrolü
+    const embedUrl = getYouTubeEmbedUrl(mediaUrl);
+    if (!embedUrl) {
+      return res.status(400).json({ error: "Geçerli bir YouTube Shorts URL'si değil." });
+    }
+
+    // 🔥 DEĞİŞİKLİK: 150 KARAKTER KURALI KALDIRILDI 🔥
+    // Sadece boş metin kontrolü yapabilirsin (İsteğe bağlı, boş da olabilir)
+    // if (!postText || postText.trim().length === 0) { ... }
+
+    // Kullanıcı Profilini Çek
+    const userDocRef = db.collection("users").doc(userId);
+    const userDoc = await userDocRef.get();
+    
+    if (!userDoc.exists) return res.status(404).json({ error: "Kullanıcı bulunamadı." });
+    
     const userData = userDoc.data();
 
+    // --- Veri Hazırlığı ---
+    const feedId = db.collection("globalFeeds").doc().id; 
+    const createdAt = FieldValue.serverTimestamp();
+
     const postData = {
+      id: feedId,
       type: "feed",
       collectionName: "globalFeeds",
-      createdAt: FieldValue.serverTimestamp(),
+      createdAt,
       uid: userId,
       ownerId: userId,
       username: userData.username || "unknown_user",
       displayName: userData.displayName || "Kullanıcı",
-      userProfileImage: userData.photoURL || "default_avatar_url...",
+      userProfileImage: userData.photoURL || "",
       photoURL: userData.photoURL || "",
       text: postText || "",
-      content: postText || "", // Yedek alan
+      content: postText || "",
       mediaUrl: embedUrl,
-      
-      // Veritabanına artık "Sahiplik" değil "Kural Onayı" olarak kaydediyoruz
       rulesAccepted: true, 
-      isOriginalContent: false, // Bu bir embed olduğu için false işaretliyoruz (Analiz için faydalı)
-      
+      isOriginalContent: false,
       privacy: privacy || "public",
       images: images || [],
-      stats: {
-        comments: 0, likes: 0, shares: 0, saves: 0,
-      },
+      stats: { comments: 0, likes: 0, shares: 0, saves: 0 },
       commentsDisabled: false,
     };
 
-    const newFeedRef = db.collection("users").doc(userId).collection("feeds").doc();
-    const newGlobalFeedRef = db.collection("globalFeeds").doc(newFeedRef.id);
-
     const batch = db.batch();
-    batch.set(newFeedRef, postData);
 
-    if (privacy === "public") {
-      batch.set(newGlobalFeedRef, postData);
+    // 1. Kullanıcı Koleksiyonu
+    const userFeedRef = userDocRef.collection("feeds").doc(feedId);
+    batch.set(userFeedRef, postData);
+
+    // 2. Global Koleksiyon (Gizli değilse)
+    if (privacy !== "private") {
+        const globalFeedRef = db.collection("globalFeeds").doc(feedId);
+        batch.set(globalFeedRef, postData);
     }
+
+    // 3. İstatistik Artır
+    batch.update(userDocRef, {
+        "stats.posts": FieldValue.increment(1)
+    });
 
     await batch.commit();
 
-    await db.collection("users").doc(userId).update({
-      "stats.posts": FieldValue.increment(1),
-    });
+    res.status(201).json({ message: "Feed başarıyla paylaşıldı.", postId: feedId });
 
-    res.status(201).json({ message: "Feed başarıyla paylaşıldı.", postId: newFeedRef.id });
   } catch (error) {
     console.error("Feed oluşturma hatası:", error);
     res.status(500).json({ error: "Sunucu hatası: " + error.message });
   }
 };
 
-// Feed silme
+/**
+ * 2. FEED SİLME
+ */
 exports.deleteFeed = async (req, res) => {
-  const { postId } = req.params;
-  const uid = req.user.uid;
-
   try {
+    const { postId } = req.params;
+    const uid = req.user.uid;
+
     const userFeedRef = db.collection("users").doc(uid).collection("feeds").doc(postId);
+    const globalFeedRef = db.collection("globalFeeds").doc(postId);
+    const userDocRef = db.collection("users").doc(uid);
+
     const feedSnap = await userFeedRef.get();
 
-    if (!feedSnap.exists) {
-      return res.status(404).json({ error: "Feed bulunamadı." });
-    }
+    if (!feedSnap.exists) return res.status(404).json({ error: "Feed bulunamadı." });
+    if (feedSnap.data().uid !== uid) return res.status(403).json({ error: "Yetkiniz yok." });
 
-    if (feedSnap.data().uid !== uid) {
-      return res.status(403).json({ error: "Yetkiniz yok." });
-    }
-
-    const globalFeedRef = db.collection("globalFeeds").doc(postId);
     const batch = db.batch();
+
     batch.delete(userFeedRef);
     batch.delete(globalFeedRef);
 
+    batch.update(userDocRef, {
+        "stats.posts": FieldValue.increment(-1)
+    });
+
     await batch.commit();
+
     res.status(200).json({ message: "Feed başarıyla silindi." });
   } catch (e) {
     console.error("Feed silme hatası:", e);
@@ -121,51 +127,94 @@ exports.deleteFeed = async (req, res) => {
   }
 };
 
-// Yorumları kapatma
-exports.disableComments = async (req, res) => {
-  const { postId } = req.params;
-  const uid = req.user.uid;
+/**
+ * 3. AKIŞ (FEED) GETİRME
+ */
+exports.getFeedFeed = async (req, res) => {
+    try {
+        const { uid } = req.user;
+        const { lastDocId } = req.query;
 
+        const followingSnap = await db.collection("follows")
+            .where("followerUid", "==", uid)
+            .where("status", "==", "following")
+            .get();
+
+        let targetUids = followingSnap.docs.map(doc => doc.data().followingUid);
+        targetUids.push(uid);
+
+        if (targetUids.length === 0) return res.status(200).json({ feeds: [] });
+
+        const activeUids = targetUids.slice(0, 30);
+
+        let query = db.collection("globalFeeds")
+            .where("uid", "in", activeUids)
+            .orderBy("createdAt", "desc")
+            .limit(10);
+
+        if (lastDocId) {
+            const lastDocSnap = await db.collection("globalFeeds").doc(lastDocId).get();
+            if (lastDocSnap.exists) {
+                query = query.startAfter(lastDocSnap);
+            }
+        }
+
+        const snapshot = await query.get();
+        const feeds = snapshot.docs.map(doc => doc.data());
+
+        return res.status(200).json({
+            feeds,
+            lastDocId: snapshot.docs.length > 0 ? snapshot.docs[snapshot.docs.length - 1].id : null
+        });
+
+    } catch (error) {
+        console.error("Feed akışı hatası:", error);
+        return res.status(500).json({ error: "Akış yüklenemedi." });
+    }
+};
+
+/**
+ * 4. YORUMLARI AÇ/KAPA
+ */
+exports.toggleFeedComments = async (req, res) => {
   try {
-    const feedRef = db.collection("users").doc(uid).collection("feeds").doc(postId);
-    const feedSnap = await feedRef.get();
+    const { postId } = req.params;
+    const uid = req.user.uid;
+    const { disable } = req.body; 
 
+    if (typeof disable !== 'boolean') {
+        return res.status(400).json({ error: "Geçersiz durum." });
+    }
+
+    const userFeedRef = db.collection("users").doc(uid).collection("feeds").doc(postId);
+    const globalFeedRef = db.collection("globalFeeds").doc(postId);
+
+    const feedSnap = await userFeedRef.get();
     if (!feedSnap.exists) return res.status(404).json({ error: "Feed bulunamadı." });
-    if (feedSnap.data().uid !== uid) return res.status(403).json({ error: "Yetkiniz yok." });
+    
+    const batch = db.batch();
+    batch.update(userFeedRef, { commentsDisabled: disable });
+    
+    const globalSnap = await globalFeedRef.get();
+    if (globalSnap.exists) {
+        batch.update(globalFeedRef, { commentsDisabled: disable });
+    }
 
-    await feedRef.update({ commentsDisabled: true });
-    await db.collection("globalFeeds").doc(postId).update({ commentsDisabled: true });
+    await batch.commit();
 
-    res.status(200).json({ message: "Yorumlar kapatıldı." });
+    res.status(200).json({ 
+        message: `Yorumlar ${disable ? 'kapatıldı' : 'açıldı'}.`,
+        commentsDisabled: disable
+    });
   } catch (e) {
-    console.error("Yorum kapatma hatası:", e);
-    res.status(500).json({ error: "Yorumlar kapatılamadı.", details: e.message });
+    console.error("Yorum toggle hatası:", e);
+    res.status(500).json({ error: "İşlem başarısız.", details: e.message });
   }
 };
 
-// Yorumları açma
-exports.enableComments = async (req, res) => {
-  const { postId } = req.params;
-  const uid = req.user.uid;
-
-  try {
-    const feedRef = db.collection("users").doc(uid).collection("feeds").doc(postId);
-    const feedSnap = await feedRef.get();
-
-    if (!feedSnap.exists) return res.status(404).json({ error: "Feed bulunamadı." });
-    if (feedSnap.data().uid !== uid) return res.status(403).json({ error: "Yetkiniz yok." });
-
-    await feedRef.update({ commentsDisabled: false });
-    await db.collection("globalFeeds").doc(postId).update({ commentsDisabled: false });
-
-    res.status(200).json({ message: "Yorumlar açıldı." });
-  } catch (e) {
-    console.error("Yorum açma hatası:", e);
-    res.status(500).json({ error: "Yorumlar açılamadı.", details: e.message });
-  }
-};
-
-// Feed detayını getirme
+/**
+ * 5. FEED DETAYI GETİRME
+ */
 exports.getFeedById = async (req, res) => {
   try {
     const { postId } = req.params;

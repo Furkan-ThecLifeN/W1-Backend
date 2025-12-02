@@ -1,6 +1,6 @@
-// routes/feelingsRoutes.js
 const express = require("express");
 const feelingsController = require("../controllers/feelingsController");
+const reportController = require("../controllers/reportController"); // ✅ Raporlama eklendi
 const isAuthenticated = require("../middlewares/verifyToken");
 const rateLimit = require("express-rate-limit");
 
@@ -11,19 +11,22 @@ const apiLimiter = rateLimit({
   max: 100,
 });
 
-// ✅ Gönderi paylaşım rotası - Giriş yapılması GEREKİR.
+// ✅ Paylaşma
 router.post("/share", isAuthenticated, apiLimiter, feelingsController.shareFeeling);
 
-// ✅ Gönderi silme rotası (sadece gönderi sahibi silebilir)
+// ✅ Silme
 router.delete("/:postId", isAuthenticated, feelingsController.deleteFeeling);
 
-// ✅ Yorumları kapatma rotası (sadece gönderi sahibi yapabilir)
-router.patch("/:postId/disable-comments", isAuthenticated, feelingsController.disableComments);
+// ✅ Akış Getirme - EKSİKTİ, EKLENDİ
+router.get("/feed", isAuthenticated, feelingsController.getFeelingFeed);
 
-// ✅ Yorumları açma rotası (sadece gönderi sahibi yapabilir)
-router.patch("/:postId/enable-comments", isAuthenticated, feelingsController.enableComments);
+// ✅ Yorumları Aç/Kapa (Tek Route - Controller ile uyumlu)
+router.patch("/:postId/comments", isAuthenticated, feelingsController.toggleFeelingComments);
 
-// ✅ Gönderi detaylarını getirme rotası - Herkes erişebilir
+// ✅ Tekil Detay
 router.get("/:postId", apiLimiter, feelingsController.getFeelingById);
+
+// ✅ Raporlama - EKSİKTİ, EKLENDİ
+router.post("/report", isAuthenticated, reportController.createReport);
 
 module.exports = router;

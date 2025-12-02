@@ -8,7 +8,7 @@ const requestIp = require("request-ip");
 const useragent = require("express-useragent");
 const path = require("path");
 const fs = require("fs");
-const multer = require("multer");
+// const multer = require("multer"); // Burada kullanmıyorsan gerek yok, route içinde kullanılıyor.
 const verifyFirebaseToken = require("./middlewares/auth");
 
 const authRoutes = require("./routes/authRoutes");
@@ -17,6 +17,7 @@ const messageRoutes = require("./routes/messageRoutes");
 const feedsRoutes = require("./routes/feedsRoutes");
 const feelingsRoutes = require("./routes/feelingsRoutes");
 const postRoutes = require("./routes/postRoutes");
+const storyRoutes = require("./routes/storyRoutes"); // ✅ YENİ: Story rotası eklendi
 const actionsBtnRoutes = require("./routes/actionsBtnRoutes");
 const reportRoutes = require("./routes/reportRoutes");
 
@@ -44,7 +45,6 @@ const allowedOrigins = [
   "https://wone-quantumtag.com"
 ];
 
-
 app.use(helmet());
 app.use(express.json());
 app.use(requestIp.mw());
@@ -52,13 +52,11 @@ app.use(useragent.express());
 
 app.use(
   cors({
-    // Kullanıcının istediği 'includes' mantığı (syntax hatası düzeltildi)
     origin: function (origin, callback) {
       if (!origin) return callback(null, true); // Postman vb. için
       if (allowedOrigins.includes(origin)) {
         return callback(null, true);
       } else {
-        // HATA DÜZELTME: Template literal (`) eklendi
         callback(
           new Error(`CORS policy: ${origin} erişime izin verilmedi`),
           false
@@ -76,6 +74,7 @@ app.use("/api/messages", messageRoutes);
 app.use("/api/feeds", feedsRoutes);
 app.use("/api/feelings", feelingsRoutes);
 app.use("/api/posts", postRoutes);
+app.use("/api/stories", storyRoutes); // ✅ YENİ: Story endpoint'i bağlandı
 app.use("/api/actions", actionsBtnRoutes);
 app.use("/api/reports", reportRoutes);
 
@@ -90,7 +89,6 @@ app.get("/", (req, res) => {
 
 const PORT = process.env.PORT || 3001;
 app.listen(PORT, () => {
-  // HATA DÜZELTME: Template literal (`) eklendi
   console.log(`Server ${PORT} portunda çalışıyor`);
   startDeletionJob();
 });

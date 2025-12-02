@@ -30,23 +30,35 @@ const storage = multer.diskStorage({
 // Resim ve Video kabul edecek şekilde upload tanımı
 const upload = multer({ 
   storage,
-  limits: { fileSize: 50 * 1024 * 1024 } // Örn: 50MB limit (video için artırıldı)
+  limits: { fileSize: 50 * 1024 * 1024 } // 50MB limit
 });
 
-// ✅ Gönderi paylaşım rotası
-// "media" alanı hem resim hem video dosyaları için kullanılacak
+// ==========================================
+// ✅ POST ROUTES
+// ==========================================
+
+// 1. Paylaşma (Resim/Video/Metin)
 router.post(
   "/share",
   isAuthenticated,
   apiLimiter,
-  upload.array("media", 5), // Frontend'den 'media' key'i ile gönderiyoruz
+  upload.array("media", 5), 
   postController.sharePost
 );
 
-// Diğer rotalar aynı kalıyor...
+// 2. Silme
 router.delete("/:postId", isAuthenticated, postController.deletePost);
-router.patch("/:postId/disable-comments", isAuthenticated, postController.disableComments);
-router.patch("/:postId/enable-comments", isAuthenticated, postController.enableComments);
+
+// 3. Akış (Feed) Getirme - EKSİKTİ, EKLENDİ
+// Kullanıcının takip ettiği kişilerin gönderilerini getirir.
+router.get("/feed", isAuthenticated, postController.getPostFeed);
+
+// 4. Yorumları Aç/Kapa (Tek Route) - GÜNCELLENDİ
+// Controller'daki 'togglePostComments' fonksiyonuna bağlandı.
+// Body: { "disable": true } veya { "disable": false } gönderilmeli.
+router.patch("/:postId/comments", isAuthenticated, postController.togglePostComments);
+
+// 5. Raporlama
 router.post("/report", isAuthenticated, reportController.createReport);
 
 module.exports = router;
