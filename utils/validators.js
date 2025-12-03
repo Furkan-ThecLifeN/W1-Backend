@@ -6,11 +6,12 @@ exports.isValidEmail = (email) => {
 };
 
 exports.isValidUsername = (username) => {
-  const usernameRegex = /^[a-z0-9_.]{3,15}$/;
-  return usernameRegex.test(username);
+  const regex = /^[a-z0-9_]{3,24}$/;
+  return regex.test(username);
 };
 
 exports.isValidPassword = (password) => {
-  const passwordRegex = /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+{}\[\]:;<>,.?~\\-]).{8,}$/;
+  const passwordRegex =
+    /^(?=.*[a-z])(?=.*[A-Z])(?=.*\d)(?=.*[!@#$%^&*()_+{}\[\]:;<>,.?~\\-]).{8,}$/;
   return passwordRegex.test(password);
 };

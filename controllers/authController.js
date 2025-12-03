@@ -87,9 +87,6 @@ const sendWelcomeEmail = async (email, username) => {
   }
 };
 
-
-
-
 // Silme Talebi E-postası
 const sendDeletionEmail = async (email) => {
   const mailOptions = {
@@ -178,7 +175,7 @@ exports.registerUser = async (req, res) => {
   if (!isValidUsername(username)) {
     return res.status(400).json({
       error:
-        "Kullanıcı adı en az 3, en fazla 15 karakter olmalı ve sadece harf, rakam ve alt çizgi içerebilir.",
+        "Kullanıcı adı en az 3, en fazla 24 karakter olmalı ve sadece harf, rakam ve alt çizgi içerebilir.",
     });
   }
   if (!isValidPassword(password)) {
@@ -202,7 +199,8 @@ exports.registerUser = async (req, res) => {
 
     // DisplayName oluşturma: öncelik req.body.displayName, sonra firstName+lastName, yoksa username
     const displayName =
-      reqDisplayName || (firstName && lastName ? `${firstName} ${lastName}` : username);
+      reqDisplayName ||
+      (firstName && lastName ? `${firstName} ${lastName}` : username);
 
     // Firebase Auth kaydı
     const userRecord = await auth.createUser({
@@ -297,7 +295,9 @@ exports.login = async (req, res) => {
       if (usernameSnapshot.empty) {
         // GÜVENLİK NOTU: "Kullanıcı bulunamadı" demek yerine, şifre yanlışmış gibi
         // davranmak "user enumeration" saldırılarını engeller.
-        console.log(`[Login] Adım 1 HATA: Kullanıcı adı bulunamadı: ${identifier}`);
+        console.log(
+          `[Login] Adım 1 HATA: Kullanıcı adı bulunamadı: ${identifier}`
+        );
         return res.status(403).json({ error: "Geçersiz kimlik bilgileri." });
       }
       userEmail = usernameSnapshot.docs[0].data().email;
@@ -324,13 +324,9 @@ exports.login = async (req, res) => {
     }
 
     if (userRecord.disabled) {
-      console.log(
-        `[Login] Adım 2 HATA: Hesap dondurulmuş: ${userEmail}`
-      );
+      console.log(`[Login] Adım 2 HATA: Hesap dondurulmuş: ${userEmail}`);
       return res.status(403).json({ error: "Bu hesap dondurulmuştur." });
     }
-    console.log(`[Login] Adım 2 BAŞARILI: Firebase Auth kaydı bulundu: ${uid}`);
-
   } catch (error) {
     if (error.code === "auth/user-not-found") {
       console.log(
@@ -378,7 +374,9 @@ exports.login = async (req, res) => {
     // Hata kontrolü 'response.ok' ile yapılır.
     if (!response.ok) {
       // Firebase'den gelen asıl hata mesajını (INVALID_LOGIN_CREDENTIALS) sunucu loguna yazdır.
-      const errorMessage = data.error ? data.error.message : "Bilinmeyen API hatası";
+      const errorMessage = data.error
+        ? data.error.message
+        : "Bilinmeyen API hatası";
       console.error(
         `[Login] Adım 3 HATA: Firebase REST API hatası (${userEmail}): ${errorMessage}`
       );
@@ -386,9 +384,6 @@ exports.login = async (req, res) => {
       return res.status(403).json({ error: "Geçersiz kimlik bilgileri." });
     }
 
-    console.log(
-      `[Login] Adım 3 BAŞARILI: Firebase REST API ile şifre doğrulandı: ${userEmail}`
-    );
 
   } catch (err) {
     console.error("[Login] Adım 3 KRİTİK HATA (Fetch):", err);
@@ -400,16 +395,19 @@ exports.login = async (req, res) => {
   // --- Adım 4: Başarılı Giriş İşlemleri (Cihaz Kaydı ve Token Oluşturma) ---
   try {
     // Cihaz kaydetme
-    await db.collection("users").doc(uid).collection("loginDevices").add({
-      ipAddress: req.clientIp || null,
-      userAgent: req.useragent.source || null,
-      lastLogin: FieldValue.serverTimestamp(),
-    });
+    await db
+      .collection("users")
+      .doc(uid)
+      .collection("loginDevices")
+      .add({
+        ipAddress: req.clientIp || null,
+        userAgent: req.useragent.source || null,
+        lastLogin: FieldValue.serverTimestamp(),
+      });
     console.log(`[Login] Adım 4: Cihaz kaydedildi: ${uid}`);
 
     // Custom token oluştur
     const customToken = await auth.createCustomToken(uid);
-    console.log(`[Login] Adım 4: Custom token oluşturuldu: ${uid}`);
 
     // Eğer hesap silinme beklemedeyse, iptal et
     const userDoc = await db.collection("users").doc(uid).get();
@@ -424,7 +422,6 @@ exports.login = async (req, res) => {
 
     // Her şey tamamsa, token'ı kullanıcıya gönder
     return res.status(200).json({ token: customToken });
-
   } catch (err) {
     console.error("[Login] Adım 4 KRİTİK HATA (Token/DB):", err);
     return res
@@ -656,7 +653,10 @@ exports.forgotPassword = async (req, res) => {
       console.log(`Şifre sıfırlama talebi: Kullanıcı bulunamadı (${email})`);
       return res
         .status(200)
-        .json({ message: "Eğer e-posta adresi sistemimizde kayıtlıysa, bir sıfırlama kodu gönderildi." });
+        .json({
+          message:
+            "Eğer e-posta adresi sistemimizde kayıtlıysa, bir sıfırlama kodu gönderildi.",
+        });
     }
     console.error("Kullanıcı arama hatası:", error);
     return res.status(500).json({ error: "İşlem sırasında bir hata oluştu." });
@@ -665,7 +665,7 @@ exports.forgotPassword = async (req, res) => {
   // Kullanıcı bulundu, şimdi kod üretiyoruz.
   const code = generateResetCode();
   // Kodu 10 dakika geçerli olacak şekilde ayarlıyoruz.
-  const expiresAt = new Date(Date.now() + 10 * 60 * 1000); 
+  const expiresAt = new Date(Date.now() + 10 * 60 * 1000);
 
   try {
     // Kodu ve son kullanma tarihini Firestore'a (yeni bir koleksiyona) kaydediyoruz.
@@ -682,11 +682,15 @@ exports.forgotPassword = async (req, res) => {
     // Başarılı yanıt (kullanıcı bulunamasa da aynı yanıtı veriyoruz)
     return res
       .status(200)
-      .json({ message: "Eğer e-posta adresi sistemimizde kayıtlıysa, bir sıfırlama kodu gönderildi." });
-      
+      .json({
+        message:
+          "Eğer e-posta adresi sistemimizde kayıtlıysa, bir sıfırlama kodu gönderildi.",
+      });
   } catch (error) {
     console.error("Şifre sıfırlama (kod kaydetme/mail) hatası:", error);
-    return res.status(500).json({ error: "Sıfırlama kodu gönderilirken bir hata oluştu." });
+    return res
+      .status(500)
+      .json({ error: "Sıfırlama kodu gönderilirken bir hata oluştu." });
   }
 };
 
@@ -697,7 +701,9 @@ exports.resetPasswordWithCode = async (req, res) => {
   const { email, code, newPassword } = req.body;
 
   if (!email || !code || !newPassword) {
-    return res.status(400).json({ error: "E-posta, kod ve yeni şifre gereklidir." });
+    return res
+      .status(400)
+      .json({ error: "E-posta, kod ve yeni şifre gereklidir." });
   }
 
   // Yeni şifrenin kurallarınıza uyup uymadığını kontrol ediyoruz.
@@ -707,13 +713,15 @@ exports.resetPasswordWithCode = async (req, res) => {
         "Şifre en az 8 karakter olmalı, en az bir büyük harf, bir küçük harf, bir rakam ve bir özel karakter içermelidir.",
     });
   }
-  
+
   let userRecord;
   try {
     userRecord = await auth.getUserByEmail(email);
   } catch (error) {
     // Kullanıcı yoksa, kodun veya e-postanın geçersiz olduğunu belirtiyoruz.
-    return res.status(404).json({ error: "Geçersiz e-posta veya sıfırlama kodu." });
+    return res
+      .status(404)
+      .json({ error: "Geçersiz e-posta veya sıfırlama kodu." });
   }
 
   try {
@@ -722,7 +730,9 @@ exports.resetPasswordWithCode = async (req, res) => {
     const resetDoc = await resetDocRef.get();
 
     if (!resetDoc.exists) {
-      return res.status(400).json({ error: "Geçersiz veya süresi dolmuş sıfırlama kodu." });
+      return res
+        .status(400)
+        .json({ error: "Geçersiz veya süresi dolmuş sıfırlama kodu." });
     }
 
     const { code: storedCode, expiresAt } = resetDoc.data();
@@ -735,7 +745,12 @@ exports.resetPasswordWithCode = async (req, res) => {
     // 2. Süresini kontrol et
     if (new Date() > expiresAt.toDate()) {
       await resetDocRef.delete(); // Süresi dolmuş kodu sil
-      return res.status(400).json({ error: "Sıfırlama kodunun süresi dolmuş. Lütfen yeni bir kod isteyin." });
+      return res
+        .status(400)
+        .json({
+          error:
+            "Sıfırlama kodunun süresi dolmuş. Lütfen yeni bir kod isteyin.",
+        });
     }
 
     // Her şey yolunda: Şifreyi Firebase Auth'da güncelle
@@ -743,14 +758,15 @@ exports.resetPasswordWithCode = async (req, res) => {
 
     // Kodu sil (tek kullanımlık olmalı)
     await resetDocRef.delete();
-    
-    // (İsteğe bağlı) Şifrenin değiştiğine dair bir onay e-postası gönderilebilir.
-    
-    return res.status(200).json({ message: "Şifreniz başarıyla güncellendi." });
 
+    // (İsteğe bağlı) Şifrenin değiştiğine dair bir onay e-postası gönderilebilir.
+
+    return res.status(200).json({ message: "Şifreniz başarıyla güncellendi." });
   } catch (error) {
     console.error("Şifre sıfırlama (kod doğrulama) hatası:", error);
-    return res.status(500).json({ error: "Şifre sıfırlanırken bir hata oluştu." });
+    return res
+      .status(500)
+      .json({ error: "Şifre sıfırlanırken bir hata oluştu." });
   }
 };
 
